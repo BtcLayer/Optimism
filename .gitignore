@@ -1,48 +1,16 @@
-.DS_Store
-node_modules
-results
-temp
-coverage.json
-**/lcov.info
+# Project specific
+deployments
+optimism
 
-yarn-error.log
-.yarn/*
-!.yarn/releases
-!.yarn/plugins
-.pnp.*
-
-dist
-artifacts
-cache
-
-!op-chain-ops/foundry/testdata/srcmaps/cache
-!op-chain-ops/foundry/testdata/srcmaps/artifacts
-
-packages/contracts-bedrock/deployments/devnetL1
-packages/contracts-bedrock/deployments/anvil
-
-# vim
-*.sw*
-
-# jetbrains
-.idea/
-
-.secrets
+# environment variables
 .env
-.env*
-!.env.example
-!.envrc.example
-*.log
+.env.local
+*.delme
 
-.devnet
+# Packages
+node_modules/
 
-# Ignore local fuzzing results
-**/testdata/fuzz/
-
-coverage.out
-
-
-__pycache__
-
-# Ignore echidna artifacts
-crytic-export
+# Hardhat build outputs
+artifacts/
+cache/
+build
