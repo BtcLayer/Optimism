@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 )
 
@@ -155,7 +154,7 @@ func docGen(invariantsDir, docsDir string) error {
 
 	for _, contract := range docs {
 		filePath := filepath.Join(docsDir, contract.Name+".md")
-		alreadyWritten := slices.Contains(writtenFiles, filePath)
+		alreadyWritten := contains(writtenFiles, filePath)
 
 		// If the file has already been written, append the extra docs to the end.
 		// Otherwise, write the file from scratch.
@@ -253,4 +252,13 @@ func renderContractDoc(contract Contract, header bool) string {
 	}
 
 	return sb.String()
+}
+
+func contains(slice []string, item string) bool {
+	for _, v := range slice {
+		if v == item {
+			return true
+		}
+	}
+	return false
 }

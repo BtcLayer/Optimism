@@ -3,12 +3,12 @@ package srcmap
 import (
 	"fmt"
 	"io"
-	"io/fs"
+	"math/big"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/vm"
 )
 
@@ -70,113 +70,84 @@ func parseInstrMapping(last InstrMapping, v string) (InstrMapping, error) {
 	return out, err
 }
 
-func loadLineColData(srcFs fs.FS, srcPath string) ([]LineCol, error) {
-	dat, err := fs.ReadFile(srcFs, srcPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read source %q: %w", srcPath, err)
-	}
-	datStr := string(dat)
-	out := make([]LineCol, len(datStr))
-	line := uint32(1)
-	lastLinePos := uint32(0)
-	for i, b := range datStr { // iterate the utf8 or the bytes?
-		col := uint32(i) - lastLinePos
-		out[i] = LineCol{Line: line, Col: col}
-		if b == '\n' {
-			lastLinePos = uint32(i)
-			line += 1
-		}
-	}
-	return out, nil
-}
-
-type SourceID uint64
-
-func (id *SourceID) UnmarshalText(data []byte) error {
-	v, err := strconv.ParseUint(string(data), 10, 64)
-	if err != nil {
-		return err
-	}
-	*id = SourceID(v)
-	return nil
-}
-
-// SourceMap is a util to map solidity deployed-bytecode positions
-// to source-file, line and column position data.
-// It is best used in combination with foundry.SourceMapFS to load the source-map.
-// The source-map functionality is tested as part of the FS.
 type SourceMap struct {
-	srcFs       fs.FS
-	srcIDToPath map[SourceID]string
+	// source names
+	Sources []string
 	// per source, source offset -> line/col
-	// This data is lazy-loaded.
-	PosData map[SourceID][]LineCol
+	PosData [][]LineCol
 	// per bytecode byte, byte index -> instr
 	Instr []InstrMapping
 }
 
-// Info translates a program-counter (execution position in the EVM bytecode)
-// into the source-code location that is being executed.
-// This location is the source file-path, the line number, and column number.
-// This may return an error, as the source-file is lazy-loaded to calculate the position data.
-func (s *SourceMap) Info(pc uint64) (source string, line uint32, col uint32, err error) {
+func (s *SourceMap) Info(pc uint64) (source string, line uint32, col uint32) {
 	instr := s.Instr[pc]
-	if instr.F < 0 || instr == (InstrMapping{}) {
-		return "generated", 0, 0, nil
+	if instr.F < 0 {
+		return "generated", 0, 0
 	}
-	id := SourceID(instr.F)
-	if _, ok := s.srcIDToPath[id]; !ok {
+	if instr.F >= int32(len(s.Sources)) {
 		source = "unknown"
 		return
 	}
-	source = s.srcIDToPath[id]
+	source = s.Sources[instr.F]
 	if instr.S < 0 {
 		return
 	}
-	posData, ok := s.PosData[id]
-	if !ok {
-		data, loadErr := loadLineColData(s.srcFs, source)
-		if loadErr != nil {
-			return source, 0, 0, loadErr
-		}
-		s.PosData[id] = data
-		posData = data
-	}
-	if int(instr.S) >= len(posData) { // possibly invalid / truncated source mapping
+	if s.PosData[instr.F] == nil { // when the source file is known to be unavailable
 		return
 	}
-	lc := posData[instr.S]
+	if int(instr.S) >= len(s.PosData[instr.F]) { // possibly invalid / truncated source mapping
+		return
+	}
+	lc := s.PosData[instr.F][instr.S]
 	line = lc.Line
 	col = lc.Col
 	return
 }
 
-// FormattedInfo is a convenience method to run Info, and turn it into a formatted string.
-// Any error is turned into a string also, to make this simple to plug into logging.
 func (s *SourceMap) FormattedInfo(pc uint64) string {
-	f, l, c, err := s.Info(pc)
-	if err != nil {
-		return "srcmap err:" + err.Error()
-	}
+	f, l, c := s.Info(pc)
 	return fmt.Sprintf("%s:%d:%d", f, l, c)
 }
 
 // ParseSourceMap parses a solidity sourcemap: mapping bytecode indices to source references.
 // See https://docs.soliditylang.org/en/latest/internals/source_mappings.html
 //
-// The srcIDToPath is the mapping of source files, which will be read from the filesystem
-// to transform token numbers into line/column numbers. Source-files are lazy-loaded when needed.
-//
-// The source identifier mapping can be loaded through a foundry.SourceMapFS,
-// also including a convenience util to load a source-map from an artifact.
-func ParseSourceMap(srcFs fs.FS, srcIDToPath map[SourceID]string, bytecode []byte, sourceMap string) (*SourceMap, error) {
+// Sources is the list of source files, which will be read from the filesystem
+// to transform token numbers into line/column numbers.
+// The sources are as referenced in the source-map by index.
+// Not all sources are necessary, some indices may be unknown.
+func ParseSourceMap(sources []string, bytecode []byte, sourceMap string) (*SourceMap, error) {
 	instructions := strings.Split(sourceMap, ";")
 
 	srcMap := &SourceMap{
-		srcFs:       srcFs,
-		srcIDToPath: srcIDToPath,
-		PosData:     make(map[SourceID][]LineCol),
-		Instr:       make([]InstrMapping, 0, len(bytecode)),
+		Sources: sources,
+		PosData: make([][]LineCol, 0, len(sources)),
+		Instr:   make([]InstrMapping, 0, len(bytecode)),
+	}
+	// map source code position byte offsets to line/column pairs
+	for i, s := range sources {
+		if strings.HasPrefix(s, "~") {
+			srcMap.PosData = append(srcMap.PosData, nil)
+			continue
+		}
+		dat, err := os.ReadFile(s)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read source %d %q: %w", i, s, err)
+		}
+		datStr := string(dat)
+
+		out := make([]LineCol, len(datStr))
+		line := uint32(1)
+		lastLinePos := uint32(0)
+		for i, b := range datStr { // iterate the utf8 or the bytes?
+			col := uint32(i) - lastLinePos
+			out[i] = LineCol{Line: line, Col: col}
+			if b == '\n' {
+				lastLinePos = uint32(i)
+				line += 1
+			}
+		}
+		srcMap.PosData = append(srcMap.PosData, out)
 	}
 
 	instIndex := 0
@@ -198,7 +169,6 @@ func ParseSourceMap(srcFs fs.FS, srcIDToPath map[SourceID]string, bytecode []byt
 		} else {
 			instMapping = instructions[instIndex]
 		}
-		// the last instruction is used to de-dup data with in the source-map encoding.
 		m, err := parseInstrMapping(lastInstr, instMapping)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse instr element in source map: %w", err)
@@ -207,7 +177,6 @@ func ParseSourceMap(srcFs fs.FS, srcIDToPath map[SourceID]string, bytecode []byt
 		for j := 0; j < instLen; j++ {
 			srcMap.Instr = append(srcMap.Instr, m)
 		}
-		lastInstr = m
 		i += instLen
 		instIndex += 1
 	}
@@ -223,44 +192,56 @@ type SourceMapTracer struct {
 	out     io.Writer
 }
 
-func (s *SourceMapTracer) info(codeAddr common.Address, pc uint64) string {
-	info := "unknown-contract"
-	srcMap, ok := s.srcMaps[codeAddr]
-	if ok {
-		info = srcMap.FormattedInfo(pc)
+func (s *SourceMapTracer) CaptureTxStart(gasLimit uint64) {}
+
+func (s *SourceMapTracer) CaptureTxEnd(restGas uint64) {}
+
+func (s *SourceMapTracer) CaptureStart(env *vm.EVM, from common.Address, to common.Address, create bool, input []byte, gas uint64, value *big.Int) {
+}
+
+func (s *SourceMapTracer) CaptureEnd(output []byte, gasUsed uint64, err error) {}
+
+func (s *SourceMapTracer) CaptureEnter(typ vm.OpCode, from common.Address, to common.Address, input []byte, gas uint64, value *big.Int) {
+}
+
+func (s *SourceMapTracer) CaptureExit(output []byte, gasUsed uint64, err error) {}
+
+func (s *SourceMapTracer) info(codeAddr *common.Address, pc uint64) string {
+	info := "non-contract"
+	if codeAddr != nil {
+		srcMap, ok := s.srcMaps[*codeAddr]
+		if ok {
+			info = srcMap.FormattedInfo(pc)
+		} else {
+			info = "unknown-contract"
+		}
 	}
 	return info
 }
 
-func (s *SourceMapTracer) OnOpCode(pc uint64, opcode byte, gas, cost uint64, scope tracing.OpContext, rData []byte, depth int, err error) {
-	op := vm.OpCode(opcode)
+func (s *SourceMapTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, rData []byte, depth int, err error) {
 	if op.IsPush() {
 		start := uint64(op) - uint64(vm.PUSH1) + 1
-		val := scope.StackData()[:start]
-		fmt.Fprintf(s.out, "%-40s : pc %x opcode %s (%x)\n", s.info(scope.Address(), pc), pc, op.String(), val)
+		end := pc + 1 + start
+		val := scope.Contract.Code[pc+1 : end]
+		fmt.Fprintf(s.out, "%-40s : pc %x opcode %s (%x)\n", s.info(scope.Contract.CodeAddr, pc), pc, op.String(), val)
 		return
 	}
-	fmt.Fprintf(s.out, "%-40s : pc %x opcode %s\n", s.info(scope.Address(), pc), pc, op.String())
+	fmt.Fprintf(s.out, "%-40s : pc %x opcode %s\n", s.info(scope.Contract.CodeAddr, pc), pc, op.String())
 }
 
-func (s *SourceMapTracer) OnFault(pc uint64, opcode byte, gas, cost uint64, scope tracing.OpContext, depth int, err error) {
-	op := vm.OpCode(opcode)
-	fmt.Fprintf(s.out, "%-40s: pc %x opcode %s FAULT %v\n", s.info(scope.Address(), pc), pc, op.String(), err)
+func (s *SourceMapTracer) CaptureFault(pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, depth int, err error) {
+	fmt.Fprintf(s.out, "%-40s: pc %x opcode %s FAULT %v\n", s.info(scope.Contract.CodeAddr, pc), pc, op.String(), err)
 	fmt.Println("----")
-	fmt.Fprintf(s.out, "calldata: %x\n", scope.CallInput())
+	fmt.Fprintf(s.out, "calldata: %x\n", scope.Contract.Input)
 	fmt.Println("----")
-	fmt.Fprintf(s.out, "memory: %x\n", scope.MemoryData())
+	fmt.Fprintf(s.out, "memory: %x\n", scope.Memory.Data())
 	fmt.Println("----")
 	fmt.Fprintf(s.out, "stack:\n")
-	stack := scope.StackData()
+	stack := scope.Stack.Data()
 	for i := range stack {
 		fmt.Fprintf(s.out, "%3d: %x\n", -i, stack[len(stack)-1-i].Bytes32())
 	}
 }
 
-func (s *SourceMapTracer) Hooks() *tracing.Hooks {
-	return &tracing.Hooks{
-		OnOpcode: s.OnOpCode,
-		OnFault:  s.OnFault,
-	}
-}
+var _ vm.EVMLogger = (*SourceMapTracer)(nil)

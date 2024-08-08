@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/holiman/uint256"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -338,7 +337,7 @@ func StoragePatch(patch io.Reader, address common.Address) HeadFn {
 
 func SetBalance(addr common.Address, amount *big.Int) HeadFn {
 	return func(_ *types.Header, headState *state.StateDB) error {
-		headState.SetBalance(addr, uint256.MustFromBig(amount), tracing.BalanceChangeUnspecified)
+		headState.SetBalance(addr, uint256.MustFromBig(amount))
 		return nil
 	}
 }

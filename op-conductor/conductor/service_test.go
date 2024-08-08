@@ -65,6 +65,7 @@ func mockConfig(t *testing.T) Config {
 			MaxSequencerDrift:       600,
 			SeqWindowSize:           3600,
 			ChannelTimeoutBedrock:   300,
+			ChannelTimeoutGranite:   50,
 			L1ChainID:               big.NewInt(1),
 			L2ChainID:               big.NewInt(2),
 			RegolithTime:            &now,

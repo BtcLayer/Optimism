@@ -10,15 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	batcherFlags "github.com/ethereum-optimism/optimism/op-batcher/flags"
-	"github.com/ethereum-optimism/optimism/op-e2e/bindings"
-	gethutils "github.com/ethereum-optimism/optimism/op-e2e/e2eutils/geth"
-	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils/transactions"
-	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils/wait"
-	"github.com/ethereum-optimism/optimism/op-node/rollup/derive"
-	"github.com/ethereum-optimism/optimism/op-service/eth"
-	"github.com/ethereum-optimism/optimism/op-service/testlog"
-	"github.com/ethereum-optimism/optimism/op-service/testutils"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -26,6 +17,19 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rpc"
+
+	batcherFlags "github.com/ethereum-optimism/optimism/op-batcher/flags"
+	"github.com/ethereum-optimism/optimism/op-e2e/bindings"
+	gethutils "github.com/ethereum-optimism/optimism/op-e2e/e2eutils/geth"
+	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils/transactions"
+	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils/wait"
+	"github.com/ethereum-optimism/optimism/op-node/rollup/derive"
+	"github.com/ethereum-optimism/optimism/op-service/client"
+	"github.com/ethereum-optimism/optimism/op-service/eth"
+	"github.com/ethereum-optimism/optimism/op-service/sources"
+	"github.com/ethereum-optimism/optimism/op-service/testlog"
+	"github.com/ethereum-optimism/optimism/op-service/testutils"
 )
 
 // TestSystem4844E2E runs the SystemE2E test with 4844 enabled on L1, and active on the rollup in
@@ -42,7 +46,6 @@ func testSystem4844E2E(t *testing.T, multiBlob bool, daType batcherFlags.DataAva
 
 	cfg := EcotoneSystemConfig(t, &genesisTime)
 	cfg.DataAvailabilityType = daType
-	cfg.BatcherBatchType = derive.SpanBatchType
 	cfg.DeployConfig.L1GenesisBlockBaseFeePerGas = (*hexutil.Big)(big.NewInt(7000))
 
 	const maxBlobs = 6
@@ -60,7 +63,7 @@ func testSystem4844E2E(t *testing.T, multiBlob bool, daType batcherFlags.DataAva
 	// front. This lets us test the ability for the batcher to clear out the incompatible
 	// transaction. The hook used here makes sure we make the jamming call before batch submission
 	// is started, as is required by the function.
-	var jamChan chan error
+	jamChan := make(chan error)
 	jamCtx, jamCancel := context.WithTimeout(context.Background(), 20*time.Second)
 	action := SystemConfigOption{
 		key: "beforeBatcherStart",
@@ -68,28 +71,26 @@ func testSystem4844E2E(t *testing.T, multiBlob bool, daType batcherFlags.DataAva
 			driver := s.BatchSubmitter.TestDriver()
 			err := driver.JamTxPool(jamCtx)
 			require.NoError(t, err)
-			jamChan = make(chan error)
 			go func() {
 				jamChan <- driver.WaitOnJammingTx(jamCtx)
 			}()
 		},
 	}
 	defer func() {
-		if jamChan != nil { // only check if we actually got to a successful batcher start
-			jamCancel()
-			require.NoError(t, <-jamChan, "jam tx error")
-		}
+		jamCancel()
+		require.NoError(t, <-jamChan, "jam tx error")
 	}()
 
 	sys, err := cfg.Start(t, action)
 	require.NoError(t, err, "Error starting up system")
+	defer sys.Close()
 
 	log := testlog.Logger(t, log.LevelInfo)
 	log.Info("genesis", "l2", sys.RollupConfig.Genesis.L2, "l1", sys.RollupConfig.Genesis.L1, "l2_time", sys.RollupConfig.Genesis.L2Time)
 
-	l1Client := sys.NodeClient("l1")
-	l2Seq := sys.NodeClient("sequencer")
-	l2Verif := sys.NodeClient("verifier")
+	l1Client := sys.Clients["l1"]
+	l2Seq := sys.Clients["sequencer"]
+	l2Verif := sys.Clients["verifier"]
 
 	// Transactor Account
 	ethPrivKey := cfg.Secrets.Alice
@@ -142,7 +143,9 @@ func testSystem4844E2E(t *testing.T, multiBlob bool, daType batcherFlags.DataAva
 	require.Equal(t, verifBlock.ParentHash(), seqBlock.ParentHash(), "Verifier and sequencer blocks parent hashes not the same after including a batch tx")
 	require.Equal(t, verifBlock.Hash(), seqBlock.Hash(), "Verifier and sequencer blocks not the same after including a batch tx")
 
-	rollupClient := sys.RollupClient("sequencer")
+	rollupRPCClient, err := rpc.DialContext(context.Background(), sys.RollupNodes["sequencer"].HTTPEndpoint())
+	require.NoError(t, err)
+	rollupClient := sources.NewRollupClient(client.NewBaseRPCClient(rollupRPCClient))
 	// basic check that sync status works
 	seqStatus, err := rollupClient.SyncStatus(context.Background())
 	require.NoError(t, err)
@@ -254,11 +257,12 @@ func TestBatcherAutoDA(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.NoError(t, err, "Error starting up system")
+	defer sys.Close()
 
 	log := testlog.Logger(t, log.LevelInfo)
 	log.Info("genesis", "l2", sys.RollupConfig.Genesis.L2, "l1", sys.RollupConfig.Genesis.L1, "l2_time", sys.RollupConfig.Genesis.L2Time)
 
-	l1Client := sys.NodeClient("l1")
+	l1Client := sys.Clients["l1"]
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

@@ -1,7 +1,6 @@
 package rollup
 
 import (
-	"log/slog"
 	"math/big"
 	"testing"
 
@@ -9,6 +8,7 @@ import (
 	"github.com/ethereum-optimism/optimism/op-service/testlog"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slog"
 )
 
 func u64ptr(n uint64) *uint64 {
@@ -37,6 +37,7 @@ var testConfig = Config{
 	MaxSequencerDrift:       600,
 	SeqWindowSize:           3600,
 	ChannelTimeoutBedrock:   300,
+	ChannelTimeoutGranite:   50,
 	L1ChainID:               big.NewInt(1),
 	L2ChainID:               big.NewInt(10),
 	RegolithTime:            u64ptr(10),
@@ -50,7 +51,7 @@ var testConfig = Config{
 	DepositContractAddress:  common.HexToAddress("0xbEb5Fc579115071764c7423A4f12eDde41f106Ed"),
 	L1SystemConfigAddress:   common.HexToAddress("0x229047fed2591dbec1eF1118d64F7aF3dB9EB290"),
 	ProtocolVersionsAddress: common.HexToAddress("0x8062AbC286f5e7D9428a0Ccb9AbD71e50d93b935"),
-	AltDAConfig:             nil,
+	PlasmaConfig:            nil,
 }
 
 func TestChainSpec_CanyonForkActivation(t *testing.T) {

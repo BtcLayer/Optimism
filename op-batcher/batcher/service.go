@@ -12,13 +12,13 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
 
-	altda "github.com/ethereum-optimism/optimism/op-alt-da"
 	"github.com/ethereum-optimism/optimism/op-batcher/flags"
 	"github.com/ethereum-optimism/optimism/op-batcher/metrics"
 	"github.com/ethereum-optimism/optimism/op-batcher/rpc"
+	celestia "github.com/ethereum-optimism/optimism/op-celestia"
 	"github.com/ethereum-optimism/optimism/op-node/chaincfg"
-	"github.com/ethereum-optimism/optimism/op-node/params"
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
+	plasma "github.com/ethereum-optimism/optimism/op-plasma"
 	"github.com/ethereum-optimism/optimism/op-service/cliapp"
 	"github.com/ethereum-optimism/optimism/op-service/dial"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
@@ -36,9 +36,9 @@ type BatcherConfig struct {
 	PollInterval           time.Duration
 	MaxPendingTransactions uint64
 
-	// UseAltDA is true if the rollup config has a DA challenge address so the batcher
-	// will post inputs to the DA server and post commitments to blobs or calldata.
-	UseAltDA bool
+	// UsePlasma is true if the rollup config has a DA challenge address so the batcher
+	// will post inputs to the Plasma DA server and post commitments to blobs or calldata.
+	UsePlasma bool
 
 	WaitNodeSync        bool
 	CheckRecentTxsDepth int
@@ -52,7 +52,7 @@ type BatcherService struct {
 	L1Client         *ethclient.Client
 	EndpointProvider dial.L2EndpointProvider
 	TxManager        *txmgr.SimpleTxManager
-	AltDA            *altda.DAClient
+	PlasmaDA         *plasma.DAClient
 
 	BatcherConfig
 
@@ -71,6 +71,7 @@ type BatcherService struct {
 	stopped         atomic.Bool
 
 	NotSubmittingOnStart bool
+	DAClient             *celestia.DAClient
 }
 
 // BatcherServiceFromCLIConfig creates a new BatcherService from a CLIConfig.
@@ -116,8 +117,11 @@ func (bs *BatcherService) initFromCLIConfig(ctx context.Context, version string,
 		return fmt.Errorf("failed to init profiling: %w", err)
 	}
 	// init before driver
-	if err := bs.initAltDA(cfg); err != nil {
-		return fmt.Errorf("failed to init AltDA: %w", err)
+	if err := bs.initPlasmaDA(cfg); err != nil {
+		return fmt.Errorf("failed to init plasma DA: %w", err)
+	}
+	if err := bs.initDA(cfg); err != nil {
+		return fmt.Errorf("failed to start da server: %w", err)
 	}
 	bs.initDriver()
 	if err := bs.initRPCServer(cfg); err != nil {
@@ -190,17 +194,27 @@ func (bs *BatcherService) initChannelConfig(cfg *CLIConfig) error {
 	// Use lower channel timeout if granite is scheduled.
 	// Ensures channels are restricted to the tighter timeout even if granite hasn't activated yet
 	if bs.RollupConfig.GraniteTime != nil {
-		channelTimeout = params.ChannelTimeoutGranite
+		channelTimeout = bs.RollupConfig.ChannelTimeoutGranite
 	}
 	cc := ChannelConfig{
-		SeqWindowSize:         bs.RollupConfig.SeqWindowSize,
-		ChannelTimeout:        channelTimeout,
-		MaxChannelDuration:    cfg.MaxChannelDuration,
-		MaxFrameSize:          cfg.MaxL1TxSize - 1, // account for version byte prefix; reset for blobs
-		MaxBlocksPerSpanBatch: cfg.MaxBlocksPerSpanBatch,
-		TargetNumFrames:       cfg.TargetNumFrames,
-		SubSafetyMargin:       cfg.SubSafetyMargin,
-		BatchType:             cfg.BatchType,
+		SeqWindowSize:      bs.RollupConfig.SeqWindowSize,
+		ChannelTimeout:     channelTimeout,
+		MaxChannelDuration: cfg.MaxChannelDuration,
+		MaxFrameSize:       cfg.MaxL1TxSize - 1, // account for version byte prefix; reset for blobs
+		MultiFrameTxs:      cfg.MultiFrameTxs,
+		TargetNumFrames:    cfg.TargetNumFrames,
+		SubSafetyMargin:    cfg.SubSafetyMargin,
+		BatchType:          cfg.BatchType,
+	}
+
+	// override max frame size if set
+	if cfg.MaxFrameSize > 0 {
+		cc.MaxFrameSize = cfg.MaxFrameSize
+	}
+
+	// enable multi-frame txs if set
+	if cfg.MultiFrameTxs {
+		cc.MultiFrameTxs = true
 	}
 
 	switch cfg.DataAvailabilityType {
@@ -215,8 +229,8 @@ func (bs *BatcherService) initChannelConfig(cfg *CLIConfig) error {
 		return fmt.Errorf("unknown data availability type: %v", cfg.DataAvailabilityType)
 	}
 
-	if bs.UseAltDA && cc.MaxFrameSize > altda.MaxInputSize {
-		return fmt.Errorf("max frame size %d exceeds altDA max input size %d", cc.MaxFrameSize, altda.MaxInputSize)
+	if bs.UsePlasma && cc.MaxFrameSize > plasma.MaxInputSize {
+		return fmt.Errorf("max frame size %d exceeds plasma max input size %d", cc.MaxFrameSize, plasma.MaxInputSize)
 	}
 
 	cc.InitCompressorConfig(cfg.ApproxComprRatio, cfg.Compressor, cfg.CompressionAlgo)
@@ -238,7 +252,8 @@ func (bs *BatcherService) initChannelConfig(cfg *CLIConfig) error {
 	}
 	bs.Log.Info("Initialized channel-config",
 		"da_type", cfg.DataAvailabilityType,
-		"use_alt_da", bs.UseAltDA,
+		"use_plasma", bs.UsePlasma,
+		"multi_frame_txs", cc.MultiFrameTxs,
 		"max_frame_size", cc.MaxFrameSize,
 		"target_num_frames", cc.TargetNumFrames,
 		"compressor", cc.CompressorConfig.Kind,
@@ -247,7 +262,7 @@ func (bs *BatcherService) initChannelConfig(cfg *CLIConfig) error {
 		"max_channel_duration", cc.MaxChannelDuration,
 		"channel_timeout", cc.ChannelTimeout,
 		"sub_safety_margin", cc.SubSafetyMargin)
-	if bs.UseAltDA {
+	if bs.UsePlasma {
 		bs.Log.Warn("Alt-DA Mode is a Beta feature of the MIT licensed OP Stack.  While it has received initial review from core contributors, it is still undergoing testing, and may have bugs or other issues.")
 	}
 
@@ -322,7 +337,8 @@ func (bs *BatcherService) initDriver() {
 		L1Client:         bs.L1Client,
 		EndpointProvider: bs.EndpointProvider,
 		ChannelConfig:    bs.ChannelConfig,
-		AltDA:            bs.AltDA,
+		PlasmaDA:         bs.PlasmaDA,
+		DAClient:         bs.DAClient,
 	})
 }
 
@@ -336,7 +352,6 @@ func (bs *BatcherService) initRPCServer(cfg *CLIConfig) error {
 	if cfg.RPC.EnableAdmin {
 		adminAPI := rpc.NewAdminAPI(bs.driver, bs.Metrics, bs.Log)
 		server.AddAPI(rpc.GetAdminAPI(adminAPI))
-		server.AddAPI(bs.TxManager.API())
 		bs.Log.Info("Admin RPC enabled")
 	}
 	bs.Log.Info("Starting JSON-RPC server")
@@ -347,13 +362,22 @@ func (bs *BatcherService) initRPCServer(cfg *CLIConfig) error {
 	return nil
 }
 
-func (bs *BatcherService) initAltDA(cfg *CLIConfig) error {
-	config := cfg.AltDA
+func (bs *BatcherService) initPlasmaDA(cfg *CLIConfig) error {
+	config := cfg.PlasmaDA
 	if err := config.Check(); err != nil {
 		return err
 	}
-	bs.AltDA = config.NewDAClient()
-	bs.UseAltDA = config.Enabled
+	bs.PlasmaDA = config.NewDAClient()
+	bs.UsePlasma = config.Enabled
+	return nil
+}
+
+func (bs *BatcherService) initDA(cfg *CLIConfig) error {
+	client, err := celestia.NewDAClient(cfg.DaConfig.Rpc, cfg.DaConfig.AuthToken, cfg.DaConfig.Namespace, cfg.DaConfig.FallbackMode)
+	if err != nil {
+		return err
+	}
+	bs.DAClient = client
 	return nil
 }
 

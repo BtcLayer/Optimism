@@ -153,8 +153,7 @@ func ExecuteMipsInstruction(insn, opcode, fun, rs, rt, mem uint32) uint32 {
 		case 0x06: // srlv
 			return rt >> (rs & 0x1F)
 		case 0x07: // srav
-			shamt := rs & 0x1F
-			return SignExtend(rt>>shamt, 32-shamt)
+			return SignExtend(rt>>rs, 32-rs)
 		// functs in range [0x8, 0x1b] are handled specially by other functions
 		case 0x08: // jr
 			return rs

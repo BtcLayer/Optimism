@@ -1,8 +1,9 @@
 .github
 .vscode
 
+node_modules
+**/node_modules
 .env
-.envrc
 **/.env
 
 test

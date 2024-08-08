@@ -8,9 +8,10 @@ import (
 
 	"github.com/urfave/cli/v2"
 
-	altda "github.com/ethereum-optimism/optimism/op-alt-da"
 	"github.com/ethereum-optimism/optimism/op-batcher/compressor"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/derive"
+	celestia "github.com/ethereum-optimism/optimism/op-celestia"
+	plasma "github.com/ethereum-optimism/optimism/op-plasma"
 	opservice "github.com/ethereum-optimism/optimism/op-service"
 	openum "github.com/ethereum-optimism/optimism/op-service/enum"
 	oplog "github.com/ethereum-optimism/optimism/op-service/log"
@@ -43,7 +44,6 @@ var (
 		Usage:   "HTTP provider URL for Rollup node. A comma-separated list enables the active L2 endpoint provider. Such a list needs to match the number of l2-eth-rpcs provided.",
 		EnvVars: prefixEnvVars("ROLLUP_RPC"),
 	}
-	// Optional flags
 	SubSafetyMarginFlag = &cli.Uint64Flag{
 		Name: "sub-safety-margin",
 		Usage: "The batcher tx submission safety margin (in #L1-blocks) to subtract " +
@@ -76,10 +76,17 @@ var (
 		Value:   120_000, // will be overwritten to max for blob da-type
 		EnvVars: prefixEnvVars("MAX_L1_TX_SIZE_BYTES"),
 	}
-	MaxBlocksPerSpanBatch = &cli.IntFlag{
-		Name:    "max-blocks-per-span-batch",
-		Usage:   "Maximum number of blocks to add to a span batch. Default is 0 - no maximum.",
-		EnvVars: prefixEnvVars("MAX_BLOCKS_PER_SPAN_BATCH"),
+	MaxFrameSizeFlag = &cli.Uint64Flag{
+		Name:    "max-frame-size-bytes",
+		Usage:   "The maximum size of a frame. 0 to use default value (120k-1)",
+		Value:   0,
+		EnvVars: prefixEnvVars("MAX_FRAME_SIZE_BYTES"),
+	}
+	MultiFrameTxsFlag = &cli.BoolFlag{
+		Name:    "multi-frame-txs",
+		Usage:   "Whether to put all frames of a channel inside a single tx. Ignored for blobs, where true will be used.",
+		Value:   false,
+		EnvVars: prefixEnvVars("MULTI_FRAME_TXS"),
 	}
 	TargetNumFramesFlag = &cli.IntFlag{
 		Name:    "target-num-frames",
@@ -174,7 +181,8 @@ var optionalFlags = []cli.Flag{
 	MaxPendingTransactionsFlag,
 	MaxChannelDurationFlag,
 	MaxL1TxSizeBytesFlag,
-	MaxBlocksPerSpanBatch,
+	MaxFrameSizeFlag,
+	MultiFrameTxsFlag,
 	TargetNumFramesFlag,
 	ApproxComprRatioFlag,
 	CompressorFlag,
@@ -192,7 +200,8 @@ func init() {
 	optionalFlags = append(optionalFlags, opmetrics.CLIFlags(EnvVarPrefix)...)
 	optionalFlags = append(optionalFlags, oppprof.CLIFlags(EnvVarPrefix)...)
 	optionalFlags = append(optionalFlags, txmgr.CLIFlags(EnvVarPrefix)...)
-	optionalFlags = append(optionalFlags, altda.CLIFlags(EnvVarPrefix, "")...)
+	optionalFlags = append(optionalFlags, plasma.CLIFlags(EnvVarPrefix, "")...)
+	optionalFlags = append(optionalFlags, celestia.CLIFlags(EnvVarPrefix)...)
 
 	Flags = append(requiredFlags, optionalFlags...)
 }

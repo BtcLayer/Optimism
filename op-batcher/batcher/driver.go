@@ -2,6 +2,7 @@ package batcher
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -11,10 +12,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	altda "github.com/ethereum-optimism/optimism/op-alt-da"
 	"github.com/ethereum-optimism/optimism/op-batcher/metrics"
+	celestia "github.com/ethereum-optimism/optimism/op-celestia"
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/derive"
+	plasma "github.com/ethereum-optimism/optimism/op-plasma"
 	"github.com/ethereum-optimism/optimism/op-service/dial"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 	"github.com/ethereum-optimism/optimism/op-service/txmgr"
@@ -65,7 +67,8 @@ type DriverSetup struct {
 	L1Client         L1Client
 	EndpointProvider dial.L2EndpointProvider
 	ChannelConfig    ChannelConfigProvider
-	AltDA            *altda.DAClient
+	PlasmaDA         *plasma.DAClient
+	DAClient         *celestia.DAClient
 }
 
 // BatchSubmitter encapsulates a service responsible for submitting L2 tx
@@ -548,6 +551,20 @@ func (l *BatchSubmitter) cancelBlockingTx(queue *txmgr.Queue[txRef], receiptsCh 
 	l.queueTx(txData{}, true, candidate, queue, receiptsCh)
 }
 
+// fallbackTxCandidate creates a fallback tx candidate for the given txdata.
+func (l *BatchSubmitter) fallbackTxCandidate(_ context.Context, txdata txData) (*txmgr.TxCandidate, error) {
+	switch l.DAClient.FallbackMode {
+	case celestia.FallbackModeBlobData:
+		return l.blobTxCandidate(txdata)
+	case celestia.FallbackModeCallData:
+		return l.calldataTxCandidate(txdata.CallData()), nil
+	case celestia.FallbackModeDisabled:
+		return nil, fmt.Errorf("celestia: fallback disabled")
+	default:
+		return nil, fmt.Errorf("celestia: unknown fallback mode: %s", l.DAClient.FallbackMode)
+	}
+}
+
 // sendTransaction creates & queues for sending a transaction to the batch inbox address with the given `txData`.
 // The method will block if the queue's MaxPendingTransactions is exceeded.
 func (l *BatchSubmitter) sendTransaction(ctx context.Context, txdata txData, queue *txmgr.Queue[txRef], receiptsCh chan txmgr.TxReceipt[txRef]) error {
@@ -565,24 +582,33 @@ func (l *BatchSubmitter) sendTransaction(ctx context.Context, txdata txData, que
 		}
 	} else {
 		// sanity check
-		if nf := len(txdata.frames); nf != 1 {
+		if nf := len(txdata.frames); nf > l.ChannelConfig.ChannelConfig().TargetNumFrames {
 			l.Log.Crit("Unexpected number of frames in calldata tx", "num_frames", nf)
 		}
 		data := txdata.CallData()
-		// if AltDA is enabled we post the txdata to the DA Provider and replace it with the commitment.
-		if l.Config.UseAltDA {
-			comm, err := l.AltDA.SetInput(ctx, data)
+		// if plasma DA is enabled we post the txdata to the DA Provider and replace it with the commitment.
+		if l.Config.UsePlasma {
+			comm, err := l.PlasmaDA.SetInput(ctx, data)
 			if err != nil {
-				l.Log.Error("Failed to post input to Alt DA", "error", err)
+				l.Log.Error("Failed to post input to Plasma DA", "error", err)
 				// requeue frame if we fail to post to the DA Provider so it can be retried
 				l.recordFailedTx(txdata.ID(), err)
 				return nil
 			}
-			l.Log.Info("Set AltDA input", "commitment", comm, "tx", txdata.ID())
-			// signal AltDA commitment tx with TxDataVersion1
+			l.Log.Info("Set plasma input", "commitment", comm, "tx", txdata.ID())
+			// signal plasma commitment tx with TxDataVersion1
 			data = comm.TxData()
 		}
-		candidate = l.calldataTxCandidate(data)
+		candidate, err = l.celestiaTxCandidate(data)
+		if err != nil {
+			l.Log.Error("celestia: blob submission failed", "err", err)
+			candidate, err = l.fallbackTxCandidate(ctx, txdata)
+			if err != nil {
+				l.Log.Error("celestia: fallback failed", "err", err)
+				l.recordFailedTx(txdata.ID(), err)
+				return nil
+			}
+		}
 	}
 
 	l.queueTx(txdata, false, candidate, queue, receiptsCh)
@@ -623,6 +649,22 @@ func (l *BatchSubmitter) calldataTxCandidate(data []byte) *txmgr.TxCandidate {
 		To:     &l.RollupConfig.BatchInboxAddress,
 		TxData: data,
 	}
+}
+
+func (l *BatchSubmitter) celestiaTxCandidate(data []byte) (*txmgr.TxCandidate, error) {
+	l.Log.Info("Building Celestia transaction candidate", "size", len(data))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Duration(l.RollupConfig.BlockTime)*time.Second)
+	ids, err := l.DAClient.Client.Submit(ctx, [][]byte{data}, -1, l.DAClient.Namespace)
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) != 1 {
+		return nil, fmt.Errorf("celestia: expected 1 id, got %d", len(ids))
+	}
+	l.Log.Info("celestia: blob successfully submitted", "id", hex.EncodeToString(ids[0]))
+	data = append([]byte{celestia.DerivationVersionCelestia}, ids[0]...)
+	return l.calldataTxCandidate(data), nil
 }
 
 func (l *BatchSubmitter) handleReceipt(r txmgr.TxReceipt[txRef]) {

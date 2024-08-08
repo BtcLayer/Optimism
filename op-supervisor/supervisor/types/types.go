@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"math/big"
 
 	"github.com/holiman/uint256"
@@ -13,17 +12,12 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 )
 
-type Message struct {
-	Identifier  Identifier  `json:"identifier"`
-	PayloadHash common.Hash `json:"payloadHash"`
-}
-
 type Identifier struct {
 	Origin      common.Address
 	BlockNumber uint64
 	LogIndex    uint64
 	Timestamp   uint64
-	ChainID     ChainID // flat, not a pointer, to make Identifier safe as map key
+	ChainID     uint256.Int // flat, not a pointer, to make Identifier safe as map key
 }
 
 type identifierMarshaling struct {
@@ -53,7 +47,7 @@ func (id *Identifier) UnmarshalJSON(input []byte) error {
 	id.BlockNumber = uint64(dec.BlockNumber)
 	id.LogIndex = uint64(dec.LogIndex)
 	id.Timestamp = uint64(dec.Timestamp)
-	id.ChainID = (ChainID)(dec.ChainID)
+	id.ChainID = (uint256.Int)(dec.ChainID)
 	return nil
 }
 
@@ -88,30 +82,11 @@ func (lvl *SafetyLevel) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// AtLeastAsSafe returns true if the receiver is at least as safe as the other SafetyLevel.
-func (lvl *SafetyLevel) AtLeastAsSafe(min SafetyLevel) bool {
-	switch min {
-	case Invalid:
-		return true
-	case Unsafe:
-		return *lvl != Invalid
-	case Safe:
-		return *lvl == Safe || *lvl == Finalized
-	case Finalized:
-		return *lvl == Finalized
-	default:
-		return false
-	}
-}
-
 const (
-	CrossFinalized SafetyLevel = "cross-finalized"
-	Finalized      SafetyLevel = "finalized"
-	CrossSafe      SafetyLevel = "cross-safe"
-	Safe           SafetyLevel = "safe"
-	CrossUnsafe    SafetyLevel = "cross-unsafe"
-	Unsafe         SafetyLevel = "unsafe"
-	Invalid        SafetyLevel = "invalid"
+	Finalized   SafetyLevel = "finalized"
+	Safe        SafetyLevel = "safe"
+	CrossUnsafe SafetyLevel = "cross-unsafe"
+	Unsafe      SafetyLevel = "unsafe"
 )
 
 type ChainID uint256.Int
@@ -126,16 +101,4 @@ func ChainIDFromUInt64(i uint64) ChainID {
 
 func (id ChainID) String() string {
 	return ((*uint256.Int)(&id)).Dec()
-}
-
-func (id ChainID) ToUInt32() (uint32, error) {
-	v := (*uint256.Int)(&id)
-	if !v.IsUint64() {
-		return 0, fmt.Errorf("ChainID too large for uint32: %v", id)
-	}
-	v64 := v.Uint64()
-	if v64 > math.MaxUint32 {
-		return 0, fmt.Errorf("ChainID too large for uint32: %v", id)
-	}
-	return uint32(v64), nil
 }

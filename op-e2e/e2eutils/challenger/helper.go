@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum-optimism/optimism/op-service/metrics"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/stretchr/testify/require"
 
@@ -25,15 +26,13 @@ import (
 	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils/wait"
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum-optimism/optimism/op-service/cliapp"
-	"github.com/ethereum-optimism/optimism/op-service/endpoint"
-	"github.com/ethereum-optimism/optimism/op-service/metrics"
 	"github.com/ethereum-optimism/optimism/op-service/testlog"
 )
 
 type EndpointProvider interface {
-	NodeEndpoint(name string) endpoint.RPC
-	RollupEndpoint(name string) endpoint.RPC
-	L1BeaconEndpoint() endpoint.RestHTTP
+	NodeEndpoint(name string) string
+	RollupEndpoint(name string) string
+	L1BeaconEndpoint() string
 }
 
 type Helper struct {
@@ -156,9 +155,9 @@ func NewChallenger(t *testing.T, ctx context.Context, sys EndpointProvider, name
 
 func NewChallengerConfig(t *testing.T, sys EndpointProvider, l2NodeName string, options ...Option) *config.Config {
 	// Use the NewConfig method to ensure we pick up any defaults that are set.
-	l1Endpoint := sys.NodeEndpoint("l1").RPC()
-	l1Beacon := sys.L1BeaconEndpoint().RestHTTP()
-	cfg := config.NewConfig(common.Address{}, l1Endpoint, l1Beacon, sys.RollupEndpoint(l2NodeName).RPC(), sys.NodeEndpoint(l2NodeName).RPC(), t.TempDir())
+	l1Endpoint := sys.NodeEndpoint("l1")
+	l1Beacon := sys.L1BeaconEndpoint()
+	cfg := config.NewConfig(common.Address{}, l1Endpoint, l1Beacon, sys.RollupEndpoint(l2NodeName), sys.NodeEndpoint(l2NodeName), t.TempDir())
 	// The devnet can't set the absolute prestate output root because the contracts are deployed in L1 genesis
 	// before the L2 genesis is known.
 	cfg.AllowInvalidPrestate = true

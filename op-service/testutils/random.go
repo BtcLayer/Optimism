@@ -299,10 +299,7 @@ func RandomBlockPrependTxsWithTime(rng *rand.Rand, txCount int, t uint64, ptxs .
 	}
 	header.GasUsed = cumulativeGasUsed
 	header.GasLimit = cumulativeGasUsed + uint64(rng.Int63n(int64(cumulativeGasUsed)))
-	body := types.Body{
-		Transactions: txs,
-	}
-	block := types.NewBlock(header, &body, receipts, trie.NewStackTrie(nil))
+	block := types.NewBlock(header, txs, nil, receipts, trie.NewStackTrie(nil))
 	logIndex := uint(0)
 	for i, r := range receipts {
 		r.BlockHash = block.Hash()

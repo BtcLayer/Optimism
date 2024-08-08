@@ -2,21 +2,18 @@ package test
 
 import (
 	"context"
-	"math/big"
 	"testing"
-
-	"github.com/stretchr/testify/require"
-
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/params"
 
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/derive"
 	"github.com/ethereum-optimism/optimism/op-program/client/l2/engineapi"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 	"github.com/ethereum-optimism/optimism/op-service/testlog"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/params"
+	"github.com/stretchr/testify/require"
 )
 
 var gasLimit = eth.Uint64Quantity(30_000_000)
@@ -112,7 +109,7 @@ func RunEngineAPITests(t *testing.T, createBackend func(t *testing.T) engineapi.
 		payload := envelope.ExecutionPayload
 		api.assert.Equal(genesis.Hash(), payload.ParentHash, "should have old block as parent")
 
-		api.newPayload(envelope)
+		api.newPayload(payload)
 		api.forkChoiceUpdated(payload.BlockHash, genesis.Hash(), genesis.Hash())
 		api.assert.Equal(payload.BlockHash, api.headHash(), "should reorg to block built on old parent")
 	})
@@ -141,12 +138,13 @@ func RunEngineAPITests(t *testing.T, createBackend func(t *testing.T) engineapi.
 		// Build a valid block
 		payloadID := api.startBlockBuilding(genesis, eth.Uint64Quantity(genesis.Time+2))
 		envelope := api.getPayload(payloadID)
+		newBlock := envelope.ExecutionPayload
 
 		// But then make it invalid by changing the state root
-		envelope.ExecutionPayload.StateRoot = eth.Bytes32(genesis.TxHash)
+		newBlock.StateRoot = eth.Bytes32(genesis.TxHash)
 		updateBlockHash(envelope)
 
-		r, err := api.callNewPayload(envelope)
+		r, err := api.engine.NewPayloadV2(api.ctx, newBlock)
 		api.assert.NoError(err)
 		api.assert.Equal(eth.ExecutionInvalid, r.Status)
 	})
@@ -158,12 +156,13 @@ func RunEngineAPITests(t *testing.T, createBackend func(t *testing.T) engineapi.
 		// Start with a valid time
 		payloadID := api.startBlockBuilding(genesis, eth.Uint64Quantity(genesis.Time+1))
 		envelope := api.getPayload(payloadID)
+		newBlock := envelope.ExecutionPayload
 
 		// Then make it invalid to check NewPayload rejects it
-		envelope.ExecutionPayload.Timestamp = eth.Uint64Quantity(genesis.Time)
+		newBlock.Timestamp = eth.Uint64Quantity(genesis.Time)
 		updateBlockHash(envelope)
 
-		r, err := api.callNewPayload(envelope)
+		r, err := api.engine.NewPayloadV2(api.ctx, newBlock)
 		api.assert.NoError(err)
 		api.assert.Equal(eth.ExecutionInvalid, r.Status)
 	})
@@ -175,12 +174,13 @@ func RunEngineAPITests(t *testing.T, createBackend func(t *testing.T) engineapi.
 		// Start with a valid time
 		payloadID := api.startBlockBuilding(genesis, eth.Uint64Quantity(genesis.Time+1))
 		envelope := api.getPayload(payloadID)
+		newBlock := envelope.ExecutionPayload
 
 		// Then make it invalid to check NewPayload rejects it
-		envelope.ExecutionPayload.Timestamp = eth.Uint64Quantity(genesis.Time - 1)
+		newBlock.Timestamp = eth.Uint64Quantity(genesis.Time - 1)
 		updateBlockHash(envelope)
 
-		r, err := api.callNewPayload(envelope)
+		r, err := api.engine.NewPayloadV2(api.ctx, newBlock)
 		api.assert.NoError(err)
 		api.assert.Equal(eth.ExecutionInvalid, r.Status)
 	})
@@ -363,7 +363,7 @@ func (h *testHelper) addBlockWithParent(head *types.Header, timestamp eth.Uint64
 	h.assert.Equal(head.Hash(), block.ParentHash, "should have correct parent")
 	h.assert.Len(block.Transactions, len(txs))
 
-	h.newPayload(envelope)
+	h.newPayload(block)
 
 	// Should not have changed the chain head yet
 	h.assert.Equal(prevHead, h.backend.CurrentHeader())
@@ -395,35 +395,25 @@ func (h *testHelper) startBlockBuilding(head *types.Header, newBlockTimestamp et
 		txData = append(txData, rlp)
 	}
 
-	attr := &eth.PayloadAttributes{
+	canyonTime := h.backend.Config().CanyonTime
+	var w *types.Withdrawals
+	if canyonTime != nil && *canyonTime <= uint64(newBlockTimestamp) {
+		w = &types.Withdrawals{}
+	}
+
+	result, err := h.engine.ForkchoiceUpdatedV2(h.ctx, &eth.ForkchoiceState{
+		HeadBlockHash:      head.Hash(),
+		SafeBlockHash:      head.Hash(),
+		FinalizedBlockHash: head.Hash(),
+	}, &eth.PayloadAttributes{
 		Timestamp:             newBlockTimestamp,
 		PrevRandao:            eth.Bytes32(head.MixDigest),
 		SuggestedFeeRecipient: feeRecipient,
 		Transactions:          txData,
 		NoTxPool:              true,
 		GasLimit:              &gasLimit,
-	}
-	n := new(big.Int).Add(head.Number, big.NewInt(1))
-	if h.backend.Config().IsShanghai(n, uint64(newBlockTimestamp)) {
-		attr.Withdrawals = &types.Withdrawals{}
-	}
-	if h.backend.Config().IsCancun(n, uint64(newBlockTimestamp)) {
-		attr.ParentBeaconBlockRoot = &common.Hash{}
-	}
-	fcState := &eth.ForkchoiceState{
-		HeadBlockHash:      head.Hash(),
-		SafeBlockHash:      head.Hash(),
-		FinalizedBlockHash: head.Hash(),
-	}
-	var result *eth.ForkchoiceUpdatedResult
-	var err error
-	if h.backend.Config().IsCancun(n, uint64(newBlockTimestamp)) {
-		result, err = h.engine.ForkchoiceUpdatedV3(h.ctx, fcState, attr)
-	} else if h.backend.Config().IsShanghai(n, uint64(newBlockTimestamp)) {
-		result, err = h.engine.ForkchoiceUpdatedV2(h.ctx, fcState, attr)
-	} else {
-		result, err = h.engine.ForkchoiceUpdatedV1(h.ctx, fcState, attr)
-	}
+		Withdrawals:           w,
+	})
 	h.assert.NoError(err)
 	h.assert.Equal(eth.ExecutionValid, result.PayloadStatus.Status)
 	id := result.PayloadID
@@ -433,25 +423,16 @@ func (h *testHelper) startBlockBuilding(head *types.Header, newBlockTimestamp et
 
 func (h *testHelper) getPayload(id *eth.PayloadID) *eth.ExecutionPayloadEnvelope {
 	h.Log("getPayload", "id", id)
-	envelope, err := h.engine.GetPayloadV2(h.ctx, *id) // calls the same underlying function as V1 and V3
+	envelope, err := h.engine.GetPayloadV2(h.ctx, *id)
 	h.assert.NoError(err)
 	h.assert.NotNil(envelope)
 	h.assert.NotNil(envelope.ExecutionPayload)
 	return envelope
 }
 
-func (h *testHelper) callNewPayload(envelope *eth.ExecutionPayloadEnvelope) (*eth.PayloadStatusV1, error) {
-	n := new(big.Int).SetUint64(uint64(envelope.ExecutionPayload.BlockNumber))
-	if h.backend.Config().IsCancun(n, uint64(envelope.ExecutionPayload.Timestamp)) {
-		return h.engine.NewPayloadV3(h.ctx, envelope.ExecutionPayload, []common.Hash{}, envelope.ParentBeaconBlockRoot)
-	} else {
-		return h.engine.NewPayloadV2(h.ctx, envelope.ExecutionPayload)
-	}
-}
-
-func (h *testHelper) newPayload(envelope *eth.ExecutionPayloadEnvelope) {
-	h.Log("newPayload", "hash", envelope.ExecutionPayload.BlockHash)
-	r, err := h.callNewPayload(envelope)
+func (h *testHelper) newPayload(block *eth.ExecutionPayload) {
+	h.Log("newPayload", "hash", block.BlockHash)
+	r, err := h.engine.NewPayloadV2(h.ctx, block)
 	h.assert.NoError(err)
 	h.assert.Equal(eth.ExecutionValid, r.Status)
 	h.assert.Nil(r.ValidationError)

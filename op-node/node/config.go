@@ -7,12 +7,13 @@ import (
 	"math"
 	"time"
 
-	altda "github.com/ethereum-optimism/optimism/op-alt-da"
+	celestia "github.com/ethereum-optimism/optimism/op-celestia"
 	"github.com/ethereum-optimism/optimism/op-node/flags"
 	"github.com/ethereum-optimism/optimism/op-node/p2p"
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/driver"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/sync"
+	plasma "github.com/ethereum-optimism/optimism/op-plasma"
 	"github.com/ethereum-optimism/optimism/op-service/oppprof"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -54,7 +55,8 @@ type Config struct {
 	RuntimeConfigReloadInterval time.Duration
 
 	// Optional
-	Tracer Tracer
+	Tracer    Tracer
+	Heartbeat HeartbeatConfig
 
 	Sync sync.Config
 
@@ -73,8 +75,10 @@ type Config struct {
 	ConductorRpc        string
 	ConductorRpcTimeout time.Duration
 
-	// AltDA config
-	AltDA altda.CLIConfig
+	// Plasma DA config
+	Plasma plasma.CLIConfig
+
+	DaConfig celestia.CLIConfig
 }
 
 type RPCConfig struct {
@@ -103,6 +107,12 @@ func (m MetricsConfig) Check() error {
 	}
 
 	return nil
+}
+
+type HeartbeatConfig struct {
+	Enabled bool
+	Moniker string
+	URL     string
 }
 
 func (cfg *Config) LoadPersisted(log log.Logger) error {
@@ -164,11 +174,14 @@ func (cfg *Config) Check() error {
 			return fmt.Errorf("sequencer must be enabled when conductor is enabled")
 		}
 	}
-	if err := cfg.AltDA.Check(); err != nil {
-		return fmt.Errorf("altDA config error: %w", err)
+	if err := cfg.Plasma.Check(); err != nil {
+		return fmt.Errorf("plasma config error: %w", err)
 	}
-	if cfg.AltDA.Enabled {
+	if cfg.Plasma.Enabled {
 		log.Warn("Alt-DA Mode is a Beta feature of the MIT licensed OP Stack.  While it has received initial review from core contributors, it is still undergoing testing, and may have bugs or other issues.")
+	}
+	if err := cfg.DaConfig.Check(); err != nil {
+		return fmt.Errorf("da config error: %w", err)
 	}
 	return nil
 }

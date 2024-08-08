@@ -1,6 +1,3 @@
-//go:build cgo_test
-// +build cgo_test
-
 package fastlz
 
 // #include <stdlib.h>

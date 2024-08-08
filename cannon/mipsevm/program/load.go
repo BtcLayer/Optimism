@@ -9,11 +9,7 @@ import (
 	"github.com/ethereum-optimism/optimism/cannon/mipsevm"
 )
 
-const (
-	HEAP_START    = 0x05_00_00_00
-	HEAP_END      = 0x60_00_00_00
-	PROGRAM_BREAK = 0x40_00_00_00
-)
+const HEAP_START = 0x05000000
 
 type CreateInitialFPVMState[T mipsevm.FPVMState] func(pc, heapStart uint32) T
 

@@ -86,10 +86,10 @@ func NewBlockProcessorFromHeader(provider BlockDataProvider, h *types.Header) (*
 		context := core.NewEVMBlockContext(header, provider, nil, provider.Config(), statedb)
 		// NOTE: Unlikely to be needed for the beacon block root, but we setup any precompile overrides anyways for forwards-compatibility
 		var precompileOverrides vm.PrecompileOverrides
-		if vmConfig := provider.GetVMConfig(); vmConfig != nil && vmConfig.PrecompileOverrides != nil {
-			precompileOverrides = vmConfig.PrecompileOverrides
+		if vmConfig := provider.GetVMConfig(); vmConfig != nil && vmConfig.OptimismPrecompileOverrides != nil {
+			precompileOverrides = vmConfig.OptimismPrecompileOverrides
 		}
-		vmenv := vm.NewEVM(context, vm.TxContext{}, statedb, provider.Config(), vm.Config{PrecompileOverrides: precompileOverrides})
+		vmenv := vm.NewEVM(context, vm.TxContext{}, statedb, provider.Config(), vm.Config{OptimismPrecompileOverrides: precompileOverrides})
 		core.ProcessBeaconBlockRoot(*header.ParentBeaconRoot, vmenv, statedb)
 	}
 	return &BlockProcessor{
@@ -124,11 +124,7 @@ func (b *BlockProcessor) AddTx(tx *types.Transaction) error {
 }
 
 func (b *BlockProcessor) Assemble() (*types.Block, error) {
-	body := types.Body{
-		Transactions: b.transactions,
-	}
-
-	return b.dataProvider.Engine().FinalizeAndAssemble(b.dataProvider, b.header, b.state, &body, b.receipts)
+	return b.dataProvider.Engine().FinalizeAndAssemble(b.dataProvider, b.header, b.state, b.transactions, nil, b.receipts, nil)
 }
 
 func (b *BlockProcessor) Commit() error {

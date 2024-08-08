@@ -2,7 +2,6 @@ package types
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -150,12 +149,8 @@ func (p *PreimageOracleData) GetPrecompileAddress() common.Address {
 	return common.BytesToAddress(p.oracleData[8:28])
 }
 
-func (p *PreimageOracleData) GetPrecompileRequiredGas() uint64 {
-	return binary.BigEndian.Uint64(p.oracleData[28:36])
-}
-
 func (p *PreimageOracleData) GetPrecompileInput() []byte {
-	return p.oracleData[36:]
+	return p.oracleData[28:]
 }
 
 // NewPreimageOracleData creates a new [PreimageOracleData] instance.

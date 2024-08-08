@@ -4,8 +4,6 @@ import (
 	"debug/elf"
 	"fmt"
 
-	"github.com/ethereum-optimism/optimism/cannon/mipsevm"
-	"github.com/ethereum-optimism/optimism/cannon/mipsevm/multithreaded"
 	"github.com/urfave/cli/v2"
 
 	"github.com/ethereum-optimism/optimism/cannon/mipsevm/program"
@@ -41,28 +39,6 @@ var (
 )
 
 func LoadELF(ctx *cli.Context) error {
-	var createInitialState func(f *elf.File) (mipsevm.FPVMState, error)
-	var writeState func(path string, state mipsevm.FPVMState) error
-
-	if vmType, err := vmTypeFromString(ctx); err != nil {
-		return err
-	} else if vmType == cannonVMType {
-		createInitialState = func(f *elf.File) (mipsevm.FPVMState, error) {
-			return program.LoadELF(f, singlethreaded.CreateInitialState)
-		}
-		writeState = func(path string, state mipsevm.FPVMState) error {
-			return jsonutil.WriteJSON[*singlethreaded.State](path, state.(*singlethreaded.State), OutFilePerm)
-		}
-	} else if vmType == mtVMType {
-		createInitialState = func(f *elf.File) (mipsevm.FPVMState, error) {
-			return program.LoadELF(f, multithreaded.CreateInitialState)
-		}
-		writeState = func(path string, state mipsevm.FPVMState) error {
-			return jsonutil.WriteJSON[*multithreaded.State](path, state.(*multithreaded.State), OutFilePerm)
-		}
-	} else {
-		return fmt.Errorf("invalid VM type: %q", vmType)
-	}
 	elfPath := ctx.Path(LoadELFPathFlag.Name)
 	elfProgram, err := elf.Open(elfPath)
 	if err != nil {
@@ -71,7 +47,7 @@ func LoadELF(ctx *cli.Context) error {
 	if elfProgram.Machine != elf.EM_MIPS {
 		return fmt.Errorf("ELF is not big-endian MIPS R3000, but got %q", elfProgram.Machine.String())
 	}
-	state, err := createInitialState(elfProgram)
+	state, err := program.LoadELF(elfProgram, singlethreaded.CreateInitialState)
 	if err != nil {
 		return fmt.Errorf("failed to load ELF data into VM state: %w", err)
 	}
@@ -95,7 +71,7 @@ func LoadELF(ctx *cli.Context) error {
 	if err := jsonutil.WriteJSON[*program.Metadata](ctx.Path(LoadELFMetaFlag.Name), meta, OutFilePerm); err != nil {
 		return fmt.Errorf("failed to output metadata: %w", err)
 	}
-	return writeState(ctx.Path(LoadELFOutFlag.Name), state)
+	return jsonutil.WriteJSON[*singlethreaded.State](ctx.Path(LoadELFOutFlag.Name), state, OutFilePerm)
 }
 
 var LoadELFCommand = &cli.Command{
@@ -104,7 +80,6 @@ var LoadELFCommand = &cli.Command{
 	Description: "Load ELF file into Cannon JSON state, optionally patch out functions",
 	Action:      LoadELF,
 	Flags: []cli.Flag{
-		VMTypeFlag,
 		LoadELFPathFlag,
 		LoadELFPatchFlag,
 		LoadELFOutFlag,

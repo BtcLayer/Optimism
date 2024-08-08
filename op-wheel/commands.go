@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -60,16 +59,12 @@ var (
 		Value:    "http://localhost:8551/",
 		EnvVars:  prefixEnvVars("ENGINE"),
 	}
-	EngineJWT = &cli.StringFlag{
-		Name:    "engine.jwt-secret",
-		Usage:   "JWT secret used to authenticate Engine API communication with. Takes precedence over engine.jwt-secret-path.",
-		EnvVars: prefixEnvVars("ENGINE_JWT_SECRET"),
-	}
 	EngineJWTPath = &cli.StringFlag{
-		Name:      "engine.jwt-secret-path",
+		Name:      "engine.jwt-secret",
 		Usage:     "Path to JWT secret file used to authenticate Engine API communication with.",
+		Required:  true,
 		TakesFile: true,
-		EnvVars:   prefixEnvVars("ENGINE_JWT_SECRET_PATH"),
+		EnvVars:   prefixEnvVars("ENGINE_JWT_SECRET"),
 	}
 	EngineOpenEndpoint = &cli.StringFlag{
 		Name:    "engine.open",
@@ -121,7 +116,7 @@ var (
 
 func withEngineFlags(flags ...cli.Flag) []cli.Flag {
 	return append(append(flags,
-		EngineEndpoint, EngineJWT, EngineJWTPath, EngineOpenEndpoint, EngineVersion),
+		EngineEndpoint, EngineJWTPath, EngineOpenEndpoint, EngineVersion),
 		oplog.CLIFlags(envVarPrefix)...)
 }
 
@@ -182,35 +177,14 @@ func initLogger(ctx *cli.Context) log.Logger {
 }
 
 func initEngineRPC(ctx *cli.Context, lgr log.Logger) (client.RPC, error) {
-	jwtString := ctx.String(EngineJWT.Name) // no IsSet check; allow empty value to be overridden
-	if jwtString == "" {
-		if ctx.IsSet(EngineJWTPath.Name) {
-			jwtData, err := os.ReadFile(ctx.String(EngineJWTPath.Name))
-			if err != nil {
-				return nil, fmt.Errorf("failed to read jwt: %w", err)
-			}
-			jwtString = string(jwtData)
-		} else {
-			return nil, errors.New("neither JWT secret string nor path provided")
-		}
-	}
-	secret, err := parseJWTSecret(jwtString)
+	jwtData, err := os.ReadFile(ctx.String(EngineJWTPath.Name))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read jwt: %w", err)
 	}
+	secret := common.HexToHash(strings.TrimSpace(string(jwtData)))
 	endpoint := ctx.String(EngineEndpoint.Name)
 	return client.NewRPC(ctx.Context, lgr, endpoint,
 		client.WithGethRPCOptions(rpc.WithHTTPAuth(node.NewJWTAuth(secret))))
-}
-
-func parseJWTSecret(v string) (common.Hash, error) {
-	v = strings.TrimSpace(v)
-	v = "0x" + strings.TrimPrefix(v, "0x") // ensure prefix is there
-	var out common.Hash
-	if err := out.UnmarshalText([]byte(v)); err != nil {
-		return common.Hash{}, fmt.Errorf("failed to parse JWT secret: %w", err)
-	}
-	return out, nil
 }
 
 func initVersionProvider(ctx *cli.Context, lgr log.Logger) (sources.EngineVersionProvider, error) {

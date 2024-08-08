@@ -1,28 +1,26 @@
 package actions
 
 import (
-	"encoding/binary"
 	"errors"
 	"math/big"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
+	"github.com/ethereum-optimism/optimism/op-program/client/l2/engineapi"
+	"github.com/ethereum-optimism/optimism/op-program/client/l2/engineapi/test"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/hashdb"
+	"github.com/stretchr/testify/require"
+
+	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils"
-	"github.com/ethereum-optimism/optimism/op-program/client/l2/engineapi"
-	"github.com/ethereum-optimism/optimism/op-program/client/l2/engineapi/test"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 	"github.com/ethereum-optimism/optimism/op-service/sources"
 	"github.com/ethereum-optimism/optimism/op-service/testlog"
@@ -46,62 +44,50 @@ func TestL2EngineAPI(gt *testing.T) {
 	require.NoError(t, err)
 
 	// build an empty block
-	chainA, _ := core.GenerateChain(sd.L2Cfg.Config, genesisBlock, consensus, db, 1, func(n int, gen *core.BlockGen) {
+	chainA, _ := core.GenerateChain(sd.L2Cfg.Config, genesisBlock, consensus, db, 1, func(i int, gen *core.BlockGen) {
 		gen.SetCoinbase(common.Address{'A'})
-		if sd.L2Cfg.Config.IsCancun(gen.Number(), gen.Timestamp()) {
-			root := crypto.Keccak256Hash([]byte("A"), binary.BigEndian.AppendUint64(nil, uint64(n)))
-			gen.SetParentBeaconRoot(root)
-		}
 	})
-
-	payloadA, err := eth.BlockAsPayloadEnv(chainA[0], sd.RollupCfg.CanyonTime)
+	payloadA, err := eth.BlockAsPayload(chainA[0], sd.RollupCfg.CanyonTime)
 	require.NoError(t, err)
 
 	// apply the payload
-	status, err := l2Cl.NewPayload(t.Ctx(), payloadA.ExecutionPayload, payloadA.ParentBeaconBlockRoot)
+	status, err := l2Cl.NewPayload(t.Ctx(), payloadA, nil)
 	require.NoError(t, err)
-	require.Equal(t, eth.ExecutionValid, status.Status)
+	require.Equal(t, status.Status, eth.ExecutionValid)
 	require.Equal(t, genesisBlock.Hash(), engine.l2Chain.CurrentBlock().Hash(), "processed payloads are not immediately canonical")
 
 	// recognize the payload as canonical
 	fcRes, err := l2Cl.ForkchoiceUpdate(t.Ctx(), &eth.ForkchoiceState{
-		HeadBlockHash:      payloadA.ExecutionPayload.BlockHash,
+		HeadBlockHash:      payloadA.BlockHash,
 		SafeBlockHash:      genesisBlock.Hash(),
 		FinalizedBlockHash: genesisBlock.Hash(),
 	}, nil)
 	require.NoError(t, err)
-
 	require.Equal(t, fcRes.PayloadStatus.Status, eth.ExecutionValid)
-	require.Equal(t, payloadA.ExecutionPayload.BlockHash, engine.l2Chain.CurrentBlock().Hash(), "now payload A is canonical")
+	require.Equal(t, payloadA.BlockHash, engine.l2Chain.CurrentBlock().Hash(), "now payload A is canonical")
 
 	// build an alternative block
-	chainB, _ := core.GenerateChain(sd.L2Cfg.Config, genesisBlock, consensus, db, 1, func(n int, gen *core.BlockGen) {
+	chainB, _ := core.GenerateChain(sd.L2Cfg.Config, genesisBlock, consensus, db, 1, func(i int, gen *core.BlockGen) {
 		gen.SetCoinbase(common.Address{'B'})
-		if sd.L2Cfg.Config.IsCancun(gen.Number(), gen.Timestamp()) {
-			root := crypto.Keccak256Hash([]byte("A"), binary.BigEndian.AppendUint64(nil, uint64(n)))
-			gen.SetParentBeaconRoot(root)
-		}
 	})
-
-	payloadB, err := eth.BlockAsPayloadEnv(chainB[0], sd.RollupCfg.CanyonTime)
+	payloadB, err := eth.BlockAsPayload(chainB[0], sd.RollupCfg.CanyonTime)
 	require.NoError(t, err)
 
 	// apply the payload
-	status, err = l2Cl.NewPayload(t.Ctx(), payloadB.ExecutionPayload, payloadB.ParentBeaconBlockRoot)
+	status, err = l2Cl.NewPayload(t.Ctx(), payloadB, nil)
 	require.NoError(t, err)
 	require.Equal(t, status.Status, eth.ExecutionValid)
-	require.Equal(t, payloadA.ExecutionPayload.BlockHash, engine.l2Chain.CurrentBlock().Hash(), "processed payloads are not immediately canonical")
+	require.Equal(t, payloadA.BlockHash, engine.l2Chain.CurrentBlock().Hash(), "processed payloads are not immediately canonical")
 
 	// reorg block A in favor of block B
 	fcRes, err = l2Cl.ForkchoiceUpdate(t.Ctx(), &eth.ForkchoiceState{
-		HeadBlockHash:      payloadB.ExecutionPayload.BlockHash,
+		HeadBlockHash:      payloadB.BlockHash,
 		SafeBlockHash:      genesisBlock.Hash(),
 		FinalizedBlockHash: genesisBlock.Hash(),
 	}, nil)
 	require.NoError(t, err)
 	require.Equal(t, fcRes.PayloadStatus.Status, eth.ExecutionValid)
-	require.Equal(t, payloadB.ExecutionPayload.BlockHash, engine.l2Chain.CurrentBlock().Hash(), "now payload B is canonical")
-
+	require.Equal(t, payloadB.BlockHash, engine.l2Chain.CurrentBlock().Hash(), "now payload B is canonical")
 }
 
 func TestL2EngineAPIBlockBuilding(gt *testing.T) {
@@ -147,11 +133,6 @@ func TestL2EngineAPIBlockBuilding(gt *testing.T) {
 			w = &types.Withdrawals{}
 		}
 
-		var parentBeaconBlockRoot *common.Hash
-		if sd.RollupCfg.IsEcotone(uint64(nextBlockTime)) {
-			parentBeaconBlockRoot = &common.Hash{}
-		}
-
 		// Now let's ask the engine to build a block
 		fcRes, err := l2Cl.ForkchoiceUpdate(t.Ctx(), &eth.ForkchoiceState{
 			HeadBlockHash:      parent.Hash(),
@@ -165,7 +146,6 @@ func TestL2EngineAPIBlockBuilding(gt *testing.T) {
 			NoTxPool:              false,
 			GasLimit:              (*eth.Uint64Quantity)(&sd.RollupCfg.Genesis.SystemConfig.GasLimit),
 			Withdrawals:           w,
-			ParentBeaconBlockRoot: parentBeaconBlockRoot,
 		})
 		require.NoError(t, err)
 		require.Equal(t, fcRes.PayloadStatus.Status, eth.ExecutionValid)
@@ -181,7 +161,7 @@ func TestL2EngineAPIBlockBuilding(gt *testing.T) {
 		require.Equal(t, parent.Hash(), payload.ParentHash, "block builds on parent block")
 
 		// apply the payload
-		status, err := l2Cl.NewPayload(t.Ctx(), payload, envelope.ParentBeaconBlockRoot)
+		status, err := l2Cl.NewPayload(t.Ctx(), payload, nil)
 		require.NoError(t, err)
 		require.Equal(t, status.Status, eth.ExecutionValid)
 		require.Equal(t, parent.Hash(), engine.l2Chain.CurrentBlock().Hash(), "processed payloads are not immediately canonical")

@@ -46,24 +46,21 @@ var (
 // PrecompileOracle defines the high-level API used to retrieve the result of a precompile call
 // The caller is expected to validate the input to the precompile call
 type PrecompileOracle interface {
-	Precompile(address common.Address, input []byte, requiredGas uint64) ([]byte, bool)
+	Precompile(address common.Address, input []byte) ([]byte, bool)
 }
 
 func CreatePrecompileOverrides(precompileOracle PrecompileOracle) vm.PrecompileOverrides {
-	return func(rules params.Rules, orig vm.PrecompiledContract, address common.Address) vm.PrecompiledContract {
-		if orig == nil { // Only override existing contracts. Never introduce a precompile that is not there.
-			return nil
-		}
+	return func(rules params.Rules, orig vm.PrecompiledContract, address common.Address) (vm.PrecompiledContract, bool) {
 		// NOTE: Ignoring chain rules for now. We assume that precompile behavior won't change for the foreseeable future
 		switch address {
 		case ecrecoverPrecompileAddress:
-			return &ecrecoverOracle{Orig: orig, Oracle: precompileOracle}
+			return &ecrecoverOracle{Orig: orig, Oracle: precompileOracle}, true
 		case bn256PairingPrecompileAddress:
-			return &bn256PairingOracle{Orig: orig, Oracle: precompileOracle}
+			return &bn256PairingOracle{Orig: orig, Oracle: precompileOracle}, true
 		case kzgPointEvaluationPrecompileAddress:
-			return &kzgPointEvaluationOracle{Orig: orig, Oracle: precompileOracle}
+			return &kzgPointEvaluationOracle{Orig: orig, Oracle: precompileOracle}, true
 		default:
-			return orig
+			return nil, false
 		}
 	}
 }
@@ -104,7 +101,7 @@ func (c *ecrecoverOracle) Run(input []byte) ([]byte, error) {
 	// v needs to be at the end for libsecp256k1
 
 	// Modification note: below replaces the crypto.Ecrecover call
-	result, ok := c.Oracle.Precompile(ecrecoverPrecompileAddress, input, c.RequiredGas(input))
+	result, ok := c.Oracle.Precompile(ecrecoverPrecompileAddress, input)
 	if !ok {
 		return nil, errors.New("invalid ecrecover input")
 	}
@@ -147,7 +144,7 @@ func (b *bn256PairingOracle) Run(input []byte) ([]byte, error) {
 	}
 	// Modification note: below replaces point verification and pairing checks
 	// Assumes both L2 and the L1 oracle have an identical range of valid points
-	result, ok := b.Oracle.Precompile(bn256PairingPrecompileAddress, input, b.RequiredGas(input))
+	result, ok := b.Oracle.Precompile(bn256PairingPrecompileAddress, input)
 	if !ok {
 		return nil, errors.New("invalid bn256Pairing check")
 	}
@@ -214,7 +211,7 @@ func (b *kzgPointEvaluationOracle) Run(input []byte) ([]byte, error) {
 	copy(proof[:], input[144:])
 
 	// Modification note: below replaces the kzg4844.VerifyProof call
-	result, ok := b.Oracle.Precompile(kzgPointEvaluationPrecompileAddress, input, b.RequiredGas(input))
+	result, ok := b.Oracle.Precompile(kzgPointEvaluationPrecompileAddress, input)
 	if !ok {
 		return nil, fmt.Errorf("%w: invalid KZG point evaluation", errBlobVerifyKZGProof)
 	}

@@ -1006,11 +1006,6 @@
   },
   {
     "inputs": [],
-    "name": "InvalidChallengePeriod",
-    "type": "error"
-  },
-  {
-    "inputs": [],
     "name": "InvalidClockExtension",
     "type": "error"
   },

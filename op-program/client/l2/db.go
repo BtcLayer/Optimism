@@ -13,7 +13,9 @@ import (
 
 var codePrefixedKeyLength = common.HashLength + len(rawdb.CodePrefix)
 
-var ErrInvalidKeyLength = errors.New("pre-images must be identified by 32-byte hash keys")
+var (
+	ErrInvalidKeyLength = errors.New("pre-images must be identified by 32-byte hash keys")
+)
 
 type OracleKeyValueStore struct {
 	db     ethdb.KeyValueStore
@@ -72,7 +74,7 @@ func (o *OracleKeyValueStore) Delete(key []byte) error {
 	panic("not supported")
 }
 
-func (o *OracleKeyValueStore) Stat() (string, error) {
+func (o *OracleKeyValueStore) Stat(property string) (string, error) {
 	panic("not supported")
 }
 
@@ -81,5 +83,9 @@ func (o *OracleKeyValueStore) NewIterator(prefix []byte, start []byte) ethdb.Ite
 }
 
 func (o *OracleKeyValueStore) Compact(start []byte, limit []byte) error {
+	panic("not supported")
+}
+
+func (o *OracleKeyValueStore) NewSnapshot() (ethdb.Snapshot, error) {
 	panic("not supported")
 }

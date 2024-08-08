@@ -3,7 +3,7 @@ version: 2.1
 parameters:
   ci_builder_image:
     type: string
-    default: us-docker.pkg.dev/oplabs-tools-artifacts/images/ci-builder:v0.51.0
+    default: us-docker.pkg.dev/oplabs-tools-artifacts/images/ci-builder:v0.50.0
   ci_builder_rust_image:
     type: string
     default: us-docker.pkg.dev/oplabs-tools-artifacts/images/ci-builder-rust:latest
@@ -103,13 +103,6 @@ commands:
             pip3 install -r requirements.txt
             python3 main.py "<<parameters.patterns>>"
 
-  install-contracts-dependencies:
-    description: "Install the dependencies for the smart contracts"
-    steps:
-      - run:
-          command: just install
-          working_directory: packages/contracts-bedrock
-
   notify-failures-on-develop:
     description: "Notify Slack"
     parameters:
@@ -184,22 +177,44 @@ jobs:
     resource_class: xlarge
     steps:
       - checkout
-#      - run:  # temporarily disabled, to update ci-builder.
-#          name: "Check L1 geth version"
-#          command: ./ops/scripts/geth-version-checker.sh || (echo "geth version is wrong, update ci-builder"; false)
-      - install-contracts-dependencies
+      - run:
+          name: "Check L1 geth version"
+          command: ./ops/scripts/geth-version-checker.sh || (echo "geth version is wrong, update ci-builder"; false)
+      - run:
+          name: git submodules
+          command: make submodules
+      - restore_cache:
+          name: Restore PNPM Package Cache
+          keys:
+            - pnpm-packages-v2-{{ checksum "pnpm-lock.yaml" }}
       - restore_cache:
           name: Restore Go modules cache
           key: gomod-{{ checksum "go.sum" }}
+      # Fetch node_modules into the pnpm store
+      # This will cache node_modules based on pnpm-lock so other steps can instantly install them with `pnpm install --prefer-offline`
+      # --prefer-offline installs node_modules instantly by just reading from cache if it exists rather than fetching from network
+      # when installing node_modules pnpm simply adds symlinks instead of copying the files which is why it is pretty much instant to run --prefer-offline
+      # this allows a caching strategy of only checking pnpm-lockfile so we don't have to keep it in sync with our packages
+      # For more information see https://pnpm.io/cli/fetch
+      - run:
+          name: Fetch dependencies
+          command: pnpm fetch --frozen-lockfile --prefer-offline
+      - save_cache:
+          name: Save PNPM Package Cache
+          key: pnpm-packages-v2-{{ checksum "pnpm-lock.yaml" }}
+          paths:
+            - "node_modules"
+      - run:
+          name: Install dependencies
+          command: pnpm install
       - run:
           name: print forge version
           command: forge --version
       - run:
-          name: Build contracts
+          name: Build monorepo
           environment:
             FOUNDRY_PROFILE: ci
-          command: just build
-          working_directory: packages/contracts-bedrock
+          command: pnpm build
       - run:
           name: Generate L2OO allocs
           command: DEVNET_L2OO="true" make devnet-allocs
@@ -207,26 +222,29 @@ jobs:
           name: Copy L2OO allocs to .devnet-l2oo
           command: cp -r .devnet/ .devnet-l2oo/
       - run:
-          name: Generate AltDA allocs
-          command: DEVNET_ALTDA="true" make devnet-allocs
+          name: Generate Plasma allocs
+          command: DEVNET_PLASMA="true" make devnet-allocs
       - run:
-          name: Copy AltDA allocs to .devnet-altda
-          command: cp -r .devnet/ .devnet-altda/
+          name: Copy Plasma allocs to .devnet-plasma
+          command: cp -r .devnet/ .devnet-plasma/
       - run:
-          name: Generate Generic AltDA allocs
-          command: DEVNET_ALTDA="true" GENERIC_ALTDA="true" make devnet-allocs
+          name: Generate Generic Plasma allocs
+          command: DEVNET_PLASMA="true" GENERIC_PLASMA="true" make devnet-allocs
       - run:
-          name: Copy AltDA allocs to .devnet-altda
-          command: cp -r .devnet/ .devnet-altda-generic/
+          name: Copy Plasma allocs to .devnet-plasma
+          command: cp -r .devnet/ .devnet-plasma-generic/
       - run:
           name: Generate default allocs
           command: make devnet-allocs
       - persist_to_workspace:
           root: "."
           paths:
+            - "packages/**/dist"
             - "packages/contracts-bedrock/cache"
             - "packages/contracts-bedrock/artifacts"
             - "packages/contracts-bedrock/forge-artifacts"
+            - "packages/contracts-bedrock/tsconfig.tsbuildinfo"
+            - "packages/contracts-bedrock/tsconfig.build.tsbuildinfo"
             - ".devnet/allocs-l1.json"
             - ".devnet/allocs-l2-delta.json"
             - ".devnet/allocs-l2-ecotone.json"
@@ -239,18 +257,18 @@ jobs:
             - ".devnet-l2oo/allocs-l2-ecotone.json"
             - ".devnet-l2oo/allocs-l2-fjord.json"
             - ".devnet-l2oo/allocs-l2-granite.json"
-            - ".devnet-altda/allocs-l1.json"
-            - ".devnet-altda/addresses.json"
-            - ".devnet-altda/allocs-l2-delta.json"
-            - ".devnet-altda/allocs-l2-ecotone.json"
-            - ".devnet-altda/allocs-l2-fjord.json"
-            - ".devnet-altda/allocs-l2-granite.json"
-            - ".devnet-altda-generic/allocs-l1.json"
-            - ".devnet-altda-generic/addresses.json"
-            - ".devnet-altda-generic/allocs-l2-delta.json"
-            - ".devnet-altda-generic/allocs-l2-ecotone.json"
-            - ".devnet-altda-generic/allocs-l2-fjord.json"
-            - ".devnet-altda-generic/allocs-l2-granite.json"
+            - ".devnet-plasma/allocs-l1.json"
+            - ".devnet-plasma/addresses.json"
+            - ".devnet-plasma/allocs-l2-delta.json"
+            - ".devnet-plasma/allocs-l2-ecotone.json"
+            - ".devnet-plasma/allocs-l2-fjord.json"
+            - ".devnet-plasma/allocs-l2-granite.json"
+            - ".devnet-plasma-generic/allocs-l1.json"
+            - ".devnet-plasma-generic/addresses.json"
+            - ".devnet-plasma-generic/allocs-l2-delta.json"
+            - ".devnet-plasma-generic/allocs-l2-ecotone.json"
+            - ".devnet-plasma-generic/allocs-l2-fjord.json"
+            - ".devnet-plasma-generic/allocs-l2-granite.json"
             - "packages/contracts-bedrock/deploy-config/devnetL1.json"
             - "packages/contracts-bedrock/deployments/devnetL1"
       - notify-failures-on-develop
@@ -432,9 +450,9 @@ jobs:
             - run:
                 name: Sign
                 command: |
-                  VER=$(jq -r .binary_signer < versions.json)
-                  wget -O - "https://github.com/ethereum-optimism/binary_signer/archive/refs/tags/v${VER}.tar.gz" | tar xz
-                  cd "binary_signer-${VER}/signer"
+                  git clone https://github.com/ethereum-optimism/binary_signer
+                  cd binary_signer/signer
+                  git checkout tags/v1.0.3
 
                   IMAGE_PATH="<<parameters.registry>>/<<parameters.repo>>/<<parameters.docker_name>>:<<pipeline.git.revision>>"
                   echo $IMAGE_PATH
@@ -498,7 +516,9 @@ jobs:
     resource_class: xlarge
     steps:
       - checkout
-      - install-contracts-dependencies
+      - run:
+          name: git submodules
+          command: make submodules
       - check-changed:
           patterns: contracts-bedrock,op-node
       - run:
@@ -525,13 +545,11 @@ jobs:
     resource_class: xlarge
     steps:
       - checkout
+      - run:
+          name: git submodules
+          command: make submodules
       - check-changed:
           patterns: contracts-bedrock,op-node
-      - install-contracts-dependencies
-      - run:
-          name: print dependencies
-          command: just dep-status
-          working_directory: packages/contracts-bedrock
       - run:
           name: print forge version
           command: forge --version
@@ -543,13 +561,6 @@ jobs:
             FOUNDRY_PROFILE: ci
           working_directory: packages/contracts-bedrock
           no_output_timeout: 15m
-      - run:
-          name: print failed test traces
-          command: just test-rerun
-          environment:
-            FOUNDRY_PROFILE: ci
-          working_directory: packages/contracts-bedrock
-          when: on_fail
 
   contracts-bedrock-checks:
     docker:
@@ -557,19 +568,33 @@ jobs:
     resource_class: xlarge
     steps:
       - checkout
+      - run:
+          name: git submodules
+          command: make submodules
+      - restore_cache:
+          name: Restore PNPM Package Cache
+          keys:
+            - pnpm-packages-v2-{{ checksum "pnpm-lock.yaml" }}
       - attach_workspace: { at: "." }
-      - install-contracts-dependencies
       - check-changed:
           patterns: contracts-bedrock,op-node
       - setup_remote_docker:
           docker_layer_caching: true
+      # populate node modules from the cache
+      - run:
+          name: Install dependencies
+          command: pnpm install
+          working_directory: packages/contracts-bedrock
       - run:
           name: forge version
           command: forge --version
       - run:
+          # The solc warnings check must be the first step to build the contracts, that way the
+          # warnings are output here. On subsequent runs, forge will read artifacts from the cache
+          # so warnings would not occur.
           name: solc warnings check
           command: |
-            forge build --force --deny-warnings || echo "export SOLC_WARNINGS_CHECK=1" >> "$BASH_ENV"
+            forge build --deny-warnings || echo "export SOLC_WARNINGS_CHECK=1" >> "$BASH_ENV"
           environment:
             FOUNDRY_PROFILE: ci
           working_directory: packages/contracts-bedrock
@@ -660,7 +685,14 @@ jobs:
     resource_class: medium
     steps:
       - checkout
+      - restore_cache:
+          name: Restore PNPM Package Cache
+          keys:
+            - pnpm-packages-v2-{{ checksum "pnpm-lock.yaml" }}
       - attach_workspace: { at: "." }
+      - run:
+          name: Install dependencies
+          command: pnpm install
       - check-changed:
           patterns: contracts-bedrock
       - run:
@@ -838,11 +870,11 @@ jobs:
                 command: echo 'export OP_E2E_USE_L2OO=true' >> $BASH_ENV
       - when:
           condition:
-            equal: ['-altda', <<parameters.variant>>]
+            equal: ['-plasma', <<parameters.variant>>]
           steps:
             - run:
-                name: Set OP_E2E_USE_ALTDA = true
-                command: echo 'export OP_E2E_USE_ALTDA=true' >> $BASH_ENV
+                name: Set OP_E2E_USE_PLASMA = true
+                command: echo 'export OP_E2E_USE_PLASMA=true' >> $BASH_ENV
       - check-changed:
           patterns: op-(.+),cannon,contracts-bedrock
       - run:
@@ -857,7 +889,7 @@ jobs:
       - attach_workspace:
           at: /tmp/workspace
       - run:
-          name: Load devnet-allocs and artifacts
+          name: Load devnet-allocs
           command: |
             mkdir -p .devnet
             cp /tmp/workspace/.devnet<<parameters.variant>>/allocs-l2-delta.json .devnet/allocs-l2-delta.json
@@ -866,7 +898,6 @@ jobs:
             cp /tmp/workspace/.devnet<<parameters.variant>>/allocs-l2-granite.json .devnet/allocs-l2-granite.json
             cp /tmp/workspace/.devnet<<parameters.variant>>/allocs-l1.json .devnet/allocs-l1.json
             cp /tmp/workspace/.devnet<<parameters.variant>>/addresses.json .devnet/addresses.json
-            cp -r /tmp/workspace/packages/contracts-bedrock/forge-artifacts packages/contracts-bedrock/forge-artifacts
             cp /tmp/workspace/packages/contracts-bedrock/deploy-config/devnetL1.json packages/contracts-bedrock/deploy-config/devnetL1.json
             cp -r /tmp/workspace/packages/contracts-bedrock/deployments/devnetL1 packages/contracts-bedrock/deployments/devnetL1
       - run:
@@ -1040,7 +1071,9 @@ jobs:
           key: gomod-{{ checksum "go.sum" }}
       - restore_cache:
           key: golang-build-cache
-      - install-contracts-dependencies
+      - run:
+          name: git submodules
+          command: make submodules
       - run:
           name: generate devnet allocs
           command: make devnet-allocs
@@ -1067,42 +1100,44 @@ jobs:
       DEVNET_NO_BUILD: 'true'
       # Default value; Can be overridden.
       DEVNET_L2OO: 'false'
-      DEVNET_ALTDA: 'false'
+      DEVNET_PLASMA: 'false'
     steps:
       - checkout
       - when:
           condition:
-            equal: ['altda', <<parameters.variant>>]
+            equal: ['plasma', <<parameters.variant>>]
           steps:
             - run:
-                name: Set DEVNET_ALTDA = true
-                command: echo 'export DEVNET_ALTDA=true' >> $BASH_ENV
+                name: Set DEVNET_PLASMA = true
+                command: echo 'export DEVNET_PLASMA=true' >> $BASH_ENV
       - when:
           condition:
-            equal: ['altda-generic', <<parameters.variant>>]
+            equal: ['plasma-generic', <<parameters.variant>>]
           steps:
             - run:
-                name: Set DEVNET_ALTDA = true
-                command: echo 'export DEVNET_ALTDA=true' >> $BASH_ENV
+                name: Set DEVNET_PLASMA = true
+                command: echo 'export DEVNET_PLASMA=true' >> $BASH_ENV
             - run:
-                name: Set GENERIC_ALTDA = true
-                command: echo 'export GENERIC_ALTDA=true' >> $BASH_ENV
+                name: Set GENERIC_PLASMA = true
+                command: echo 'export GENERIC_PLASMA=true' >> $BASH_ENV
       - check-changed:
           patterns: op-(.+),packages,ops-bedrock,bedrock-devnet
       - run:
           name: Install latest golang
           command: |
-            VER=$(jq -r .go < versions.json)
+            wget https://go.dev/dl/go1.21.1.linux-amd64.tar.gz
             sudo rm -rf /usr/local/go
-            wget "https://go.dev/dl/go${VER}.linux-amd64.tar.gz" -O - | sudo tar -C /usr/local -xz
+            sudo tar -C /usr/local -xzf go1.21.1.linux-amd64.tar.gz
             export PATH=$PATH:/usr/local/go/bin
             go version
       - run:
           name: Install Geth
           command: |
-            VER=$(jq -r .geth_release < versions.json)
-            wget "https://gethstore.blob.core.windows.net/builds/geth-alltools-linux-amd64-${VER}.tar.gz" -O - | tar xz
-            sudo cp "geth-alltools-linux-amd64-${VER}"/* /usr/local/bin
+            wget https://gethstore.blob.core.windows.net/builds/geth-alltools-linux-amd64-1.13.14-2bd6bd01.tar.gz
+            # geth only provides md5 sums sadly
+            echo '76a04354dba9980fcbc35bece2957b30 geth-alltools-linux-amd64-1.13.14-2bd6bd01.tar.gz' | md5sum -c -
+            tar -xzvf geth-alltools-linux-amd64-1.13.14-2bd6bd01.tar.gz
+            sudo cp geth-alltools-linux-amd64-1.13.14-2bd6bd01/* /usr/local/bin
       - run:
           name: Install eth2-testnet-genesis
           command: |
@@ -1117,12 +1152,28 @@ jobs:
             source $HOME/.bashrc
             forge --version
       - run:
+          name: Install NVM
+          command: |
+            curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+            source ~/.bashrc
+            nvm --version
+      - run:
+          name: Install Node
+          command: |
+            nvm install
+            nvm use && node --version && npm --version
+      - run:
           name: Install Just
           command: |
-            VER=$(jq -r .just < versions.json)
-            curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to $HOME/bin --tag "${VER}"
+            curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to $HOME/bin
             echo 'export PATH="${PATH}:$HOME/bin"' >> $BASH_ENV
-      - install-contracts-dependencies
+      - run:
+          name: Install pnpm
+          command: |
+            npm i pnpm --global
+      - run:
+          name: git submodules
+          command: make submodules
       - attach_workspace:
           at: "."
       - when:
@@ -1150,9 +1201,9 @@ jobs:
             docker tag "$IMAGE_BASE_PREFIX/op-challenger:<<pipeline.git.revision>>" "$IMAGE_BASE_PREFIX/op-challenger:devnet"
             docker tag "$IMAGE_BASE_PREFIX/da-server:<<pipeline.git.revision>>" "$IMAGE_BASE_PREFIX/da-server:devnet"
       - run:
-          name: Build contracts
-          working_directory: packages/contracts-bedrock
-          command: just build
+          name: pnpm install and build
+          command: |
+            pnpm install && pnpm build
       - run:
           name: Bring up the stack
           command: |
@@ -1435,7 +1486,9 @@ jobs:
     resource_class: xlarge
     steps:
       - checkout
-      - install-contracts-dependencies
+      - run:
+          name: Checkout Submodule
+          command: make submodules
       - check-changed:
           no_go_deps: "true"
           patterns: contracts-bedrock/test/kontrol,contracts-bedrock/src/L1/OptimismPortal\.sol,contracts-bedrock/src/L1/OptimismPortal2\.sol,contracts-bedrock/src/L1/L1CrossDomainMessenger\.sol,contracts-bedrock/src/L1/L1ERC721Bridge\.sol,contracts-bedrock/src/L1/L1StandardBridge\.sol,contracts-bedrock/src/L1/ResourceMetering\.sol,contracts-bedrock/src/universal/StandardBridge\.sol,contracts-bedrock/src/universal/ERC721Bridge\.sol,contracts-bedrock/src/universal/CrossDomainMessenger\.sol
@@ -1443,22 +1496,12 @@ jobs:
           docker_layer_caching: true
       - run:
           name: Run Kontrol Tests
-          command: |
-            curl -X POST \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer $RV_COMPUTE_TOKEN" \
-              https://api.github.com/repos/runtimeverification/optimism-ci/actions/workflows/optimism-ci.yaml/dispatches \
-              -d '{
-                "ref": "master",
-                "inputs": {
-                  "branch_name": "<<pipeline.git.branch>>",
-                  "extra_args": "script",
-                  "statuses_sha": "<< pipeline.git.revision >>",
-                  "org": "ethereum-optimism",
-                  "repository": "optimism"
-                }
-              }'
+          command: just test-kontrol
           working_directory: ./packages/contracts-bedrock
+      - store_artifacts:
+          path: ./packages/contracts-bedrock/test/kontrol/logs/kontrol-results_latest.tar.gz
+      - store_test_results:
+          path: ./packages/contracts-bedrock
       - notify-failures-on-develop
 
 workflows:
@@ -1518,6 +1561,10 @@ workflows:
           uses_artifacts: true
           requires: ["go-mod-download", "pnpm-monorepo"]
       - go-test:
+          name: op-heartbeat-tests
+          module: op-heartbeat
+          requires: [ "go-mod-download" ]
+      - go-test:
           name: op-batcher-tests
           module: op-batcher
           requires: ["go-mod-download"]
@@ -1572,7 +1619,7 @@ workflows:
           name: op-e2e-action-tests<< matrix.variant >>
           matrix:
             parameters:
-              variant: ["", "-l2oo", "-altda"]
+              variant: ["", "-l2oo", "-plasma"]
           module: op-e2e
           target: test-actions
           parallelism: 1
@@ -1603,6 +1650,7 @@ workflows:
             - go-mod-download
             - op-batcher-tests
             - op-chain-ops-tests
+            - op-heartbeat-tests
             - op-node-tests
             - op-proposer-tests
             - op-challenger-tests
@@ -1616,7 +1664,7 @@ workflows:
             - op-e2e-HTTP-tests
             - op-e2e-fault-proof-tests
             - op-e2e-action-tests
-            - op-e2e-action-tests-altda
+            - op-e2e-action-tests-plasma
       - docker-build:
           name: op-node-docker-build
           docker_name: op-node
@@ -1653,6 +1701,11 @@ workflows:
           docker_tags: <<pipeline.git.revision>>,<<pipeline.git.branch>>
           # op-conductor is not part of the devnet, we don't save it.
       - docker-build:
+          name: op-heartbeat-docker-build
+          docker_name: op-heartbeat
+          docker_tags: <<pipeline.git.revision>>,<<pipeline.git.branch>>
+          # op-heartbeat is not part of the devnet, we don't save it.
+      - docker-build:
           name: da-server-docker-build
           docker_name: da-server
           docker_tags: <<pipeline.git.revision>>,<<pipeline.git.branch>>
@@ -1668,7 +1721,7 @@ workflows:
       - devnet:
           matrix:
             parameters:
-              variant: ["default", "altda", "altda-generic"]
+              variant: ["default", "plasma", "plasma-generic"]
           requires:
             - pnpm-monorepo
             - op-batcher-docker-build
@@ -1702,6 +1755,26 @@ workflows:
               only: /^(da-server|ci-builder(-rust)?|ufm-[a-z0-9\-]*|op-[a-z0-9\-]*)\/v.*/
             branches:
               ignore: /.*/
+      - docker-build:
+          name: op-heartbeat-release
+          filters:
+            tags:
+              only: /^op-heartbeat\/v.*/
+            branches:
+              ignore: /.*/
+          docker_name: op-heartbeat
+          docker_tags: <<pipeline.git.revision>>
+          requires: ['hold']
+          platforms: "linux/amd64,linux/arm64"
+          publish: true
+          release: true
+          context:
+            - oplabs-gcr-release
+      - check-cross-platform:
+          name: op-heartbeat-cross-platform
+          op_component: op-heartbeat
+          requires:
+            - op-heartbeat-release
       - docker-build:
           name: op-node-docker-release
           filters:
@@ -1970,7 +2043,6 @@ workflows:
       - kontrol-tests:
           context:
             - slack
-            - runtimeverification
 
   scheduled-docker-publish:
     when:
@@ -2077,6 +2149,20 @@ workflows:
           op_component: op-conductor
           requires:
             - op-conductor-docker-publish
+      - docker-build:
+          name: op-heartbeat-docker-publish
+          docker_name: op-heartbeat
+          docker_tags: <<pipeline.git.revision>>,<<pipeline.git.branch>>
+          platforms: "linux/amd64,linux/arm64"
+          publish: true
+          context:
+            - oplabs-gcr
+            - slack
+      - check-cross-platform:
+          name: op-heartbeat-cross-platform
+          op_component: op-heartbeat
+          requires:
+            - op-heartbeat-docker-publish
       - docker-build:
           name: op-supervisor-docker-publish
           docker_name: op-supervisor

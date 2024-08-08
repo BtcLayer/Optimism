@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/stretchr/testify/require"
-
+	"github.com/ethereum-optimism/optimism/op-challenger/game/fault/contracts"
+	metrics2 "github.com/ethereum-optimism/optimism/op-challenger/game/fault/contracts/metrics"
+	"github.com/ethereum-optimism/optimism/op-service/sources/batching"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -28,8 +28,9 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 
-	"github.com/ethereum-optimism/optimism/op-challenger/game/fault/contracts"
-	metrics2 "github.com/ethereum-optimism/optimism/op-challenger/game/fault/contracts/metrics"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/stretchr/testify/require"
+
 	"github.com/ethereum-optimism/optimism/op-e2e/bindings"
 	"github.com/ethereum-optimism/optimism/op-e2e/config"
 	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils/geth"
@@ -41,12 +42,11 @@ import (
 	"github.com/ethereum-optimism/optimism/op-node/rollup/derive"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/driver"
 	"github.com/ethereum-optimism/optimism/op-service/client"
-	"github.com/ethereum-optimism/optimism/op-service/endpoint"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 	"github.com/ethereum-optimism/optimism/op-service/oppprof"
 	"github.com/ethereum-optimism/optimism/op-service/predeploys"
 	"github.com/ethereum-optimism/optimism/op-service/retry"
-	"github.com/ethereum-optimism/optimism/op-service/sources/batching"
+	"github.com/ethereum-optimism/optimism/op-service/sources"
 	"github.com/ethereum-optimism/optimism/op-service/testlog"
 )
 
@@ -55,27 +55,22 @@ import (
 func TestSystemBatchType(t *testing.T) {
 	tests := []struct {
 		name string
-		f    func(*testing.T, func(*SystemConfig))
+		f    func(gt *testing.T, deltaTimeOffset *hexutil.Uint64)
 	}{
 		{"StopStartBatcher", StopStartBatcher},
 	}
 	for _, test := range tests {
 		test := test
 		t.Run(test.name+"_SingularBatch", func(t *testing.T) {
-			test.f(t, func(sc *SystemConfig) {
-				sc.BatcherBatchType = derive.SingularBatchType
-			})
+			test.f(t, nil)
 		})
+	}
+
+	deltaTimeOffset := hexutil.Uint64(0)
+	for _, test := range tests {
+		test := test
 		t.Run(test.name+"_SpanBatch", func(t *testing.T) {
-			test.f(t, func(sc *SystemConfig) {
-				sc.BatcherBatchType = derive.SpanBatchType
-			})
-		})
-		t.Run(test.name+"_SpanBatchMaxBlocks", func(t *testing.T) {
-			test.f(t, func(sc *SystemConfig) {
-				sc.BatcherBatchType = derive.SpanBatchType
-				sc.BatcherMaxBlocksPerSpanBatch = 2
-			})
+			test.f(t, &deltaTimeOffset)
 		})
 	}
 }
@@ -104,10 +99,13 @@ func TestL2OutputSubmitter(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
+	defer sys.Close()
 
-	l1Client := sys.NodeClient("l1")
+	l1Client := sys.Clients["l1"]
 
-	rollupClient := sys.RollupClient("sequencer")
+	rollupRPCClient, err := rpc.DialContext(context.Background(), sys.RollupNodes["sequencer"].HTTPEndpoint())
+	require.Nil(t, err)
+	rollupClient := sources.NewRollupClient(client.NewBaseRPCClient(rollupRPCClient))
 
 	//  OutputOracle is already deployed
 	l2OutputOracle, err := bindings.NewL2OutputOracleCaller(cfg.L1Deployments.L2OutputOracleProxy, l1Client)
@@ -121,7 +119,7 @@ func TestL2OutputSubmitter(t *testing.T) {
 	// when it creates it's first block and uses and old L1 Origin. It then does not submit a batch
 	// for that block and subsequently reorgs to match what the verifier derives when running the
 	// reconcillation process.
-	l2Verif := sys.NodeClient("verifier")
+	l2Verif := sys.Clients["verifier"]
 	_, err = geth.WaitForBlock(big.NewInt(6), l2Verif, 10*time.Duration(cfg.DeployConfig.L2BlockTime)*time.Second)
 	require.Nil(t, err)
 
@@ -170,10 +168,13 @@ func TestL2OutputSubmitterFaultProofs(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
+	defer sys.Close()
 
-	l1Client := sys.NodeClient("l1")
+	l1Client := sys.Clients["l1"]
 
-	rollupClient := sys.RollupClient("sequencer")
+	rollupRPCClient, err := rpc.DialContext(context.Background(), sys.RollupNodes["sequencer"].HTTPEndpoint())
+	require.Nil(t, err)
+	rollupClient := sources.NewRollupClient(client.NewBaseRPCClient(rollupRPCClient))
 
 	disputeGameFactory, err := bindings.NewDisputeGameFactoryCaller(cfg.L1Deployments.DisputeGameFactoryProxy, l1Client)
 	require.Nil(t, err)
@@ -181,7 +182,7 @@ func TestL2OutputSubmitterFaultProofs(t *testing.T) {
 	initialGameCount, err := disputeGameFactory.GameCount(&bind.CallOpts{})
 	require.Nil(t, err)
 
-	l2Verif := sys.NodeClient("verifier")
+	l2Verif := sys.Clients["verifier"]
 	_, err = geth.WaitForBlock(big.NewInt(6), l2Verif, 10*time.Duration(cfg.DeployConfig.L2BlockTime)*time.Second)
 	require.Nil(t, err)
 
@@ -227,9 +228,9 @@ func TestSystemE2EDencunAtGenesis(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
-
+	defer sys.Close()
 	runE2ESystemTest(t, sys)
-	head, err := sys.NodeClient("l1").BlockByNumber(context.Background(), big.NewInt(0))
+	head, err := sys.Clients["l1"].BlockByNumber(context.Background(), big.NewInt(0))
 	require.NoError(t, err)
 	require.NotNil(t, head.ExcessBlobGas(), "L1 is building dencun blocks since genesis")
 }
@@ -246,6 +247,7 @@ func TestSystemE2EDencunAtGenesisWithBlobs(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
+	defer sys.Close()
 
 	// send a blob-containing txn on l1
 	ethPrivKey := sys.Cfg.Secrets.Alice
@@ -255,14 +257,14 @@ func TestSystemE2EDencunAtGenesisWithBlobs(t *testing.T) {
 	sendCtx, sendCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer sendCancel()
 
-	l1Client := sys.NodeClient("l1")
+	l1Client := sys.Clients["l1"]
 	err = l1Client.SendTransaction(sendCtx, tx)
 	require.NoError(t, err, "Sending L1 empty blob tx")
 	// Wait for transaction on L1
 	blockContainsBlob, err := wait.ForReceiptOK(ctx, l1Client, tx.Hash())
 	require.Nil(t, err, "Waiting for blob tx on L1")
 	// end sending blob-containing txns on l1
-	l2Client := sys.NodeClient("sequencer")
+	l2Client := sys.Clients["sequencer"]
 	finalizedBlock, err := geth.WaitForL1OriginOnL2(sys.RollupConfig, blockContainsBlob.BlockNumber.Uint64(), l2Client, 30*time.Duration(cfg.DeployConfig.L1BlockTime)*time.Second)
 	require.Nil(t, err, "Waiting for L1 origin of blob tx on L2")
 	finalizationTimeout := 30 * time.Duration(cfg.DeployConfig.L1BlockTime) * time.Second
@@ -280,16 +282,16 @@ func TestSystemE2E(t *testing.T) {
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
 	runE2ESystemTest(t, sys)
-
+	defer sys.Close()
 }
 
 func runE2ESystemTest(t *testing.T, sys *System) {
 	log := testlog.Logger(t, log.LevelInfo)
 	log.Info("genesis", "l2", sys.RollupConfig.Genesis.L2, "l1", sys.RollupConfig.Genesis.L1, "l2_time", sys.RollupConfig.Genesis.L2Time)
 
-	l1Client := sys.NodeClient("l1")
-	l2Seq := sys.NodeClient("sequencer")
-	l2Verif := sys.NodeClient("verifier")
+	l1Client := sys.Clients["l1"]
+	l2Seq := sys.Clients["sequencer"]
+	l2Verif := sys.Clients["verifier"]
 
 	// Transactor Account
 	ethPrivKey := sys.Cfg.Secrets.Alice
@@ -337,7 +339,9 @@ func runE2ESystemTest(t *testing.T, sys *System) {
 	require.Equal(t, verifBlock.ParentHash(), seqBlock.ParentHash(), "Verifier and sequencer blocks parent hashes not the same after including a batch tx")
 	require.Equal(t, verifBlock.Hash(), seqBlock.Hash(), "Verifier and sequencer blocks not the same after including a batch tx")
 
-	rollupClient := sys.RollupClient("sequencer")
+	rollupRPCClient, err := rpc.DialContext(context.Background(), sys.RollupNodes["sequencer"].HTTPEndpoint())
+	require.Nil(t, err)
+	rollupClient := sources.NewRollupClient(client.NewBaseRPCClient(rollupRPCClient))
 	// basic check that sync status works
 	seqStatus, err := rollupClient.SyncStatus(context.Background())
 	require.Nil(t, err)
@@ -363,13 +367,14 @@ func TestConfirmationDepth(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
+	defer sys.Close()
 
 	log := testlog.Logger(t, log.LevelInfo)
 	log.Info("genesis", "l2", sys.RollupConfig.Genesis.L2, "l1", sys.RollupConfig.Genesis.L1, "l2_time", sys.RollupConfig.Genesis.L2Time)
 
-	l1Client := sys.NodeClient("l1")
-	l2Seq := sys.NodeClient("sequencer")
-	l2Verif := sys.NodeClient("verifier")
+	l1Client := sys.Clients["l1"]
+	l2Seq := sys.Clients["sequencer"]
+	l2Verif := sys.Clients["verifier"]
 
 	// Wait enough time for the sequencer to submit a block with distance from L1 head, submit it,
 	// and for the slower verifier to read a full sequence window and cover confirmation depth for reading and some margin
@@ -420,12 +425,13 @@ func TestPendingGasLimit(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
+	defer sys.Close()
 
 	log := testlog.Logger(t, log.LevelInfo)
 	log.Info("genesis", "l2", sys.RollupConfig.Genesis.L2, "l1", sys.RollupConfig.Genesis.L1, "l2_time", sys.RollupConfig.Genesis.L2Time)
 
-	l2Verif := sys.NodeClient("verifier")
-	l2Seq := sys.NodeClient("sequencer")
+	l2Verif := sys.Clients["verifier"]
+	l2Seq := sys.Clients["sequencer"]
 
 	checkGasLimit := func(client *ethclient.Client, number *big.Int, expected uint64) *types.Header {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -461,8 +467,9 @@ func TestFinalize(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
+	defer sys.Close()
 
-	l2Seq := sys.NodeClient("sequencer")
+	l2Seq := sys.Clients["sequencer"]
 
 	l2Finalized, err := geth.WaitForBlockToBeFinalized(big.NewInt(12), l2Seq, 1*time.Minute)
 	require.NoError(t, err, "must be able to fetch a finalized L2 block")
@@ -484,11 +491,13 @@ func TestMissingBatchE2E(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
+	defer sys.Close()
 
-	l2Seq := sys.NodeClient("sequencer")
-	l2Verif := sys.NodeClient("verifier")
-
-	seqRollupClient := sys.RollupClient("sequencer")
+	l2Seq := sys.Clients["sequencer"]
+	l2Verif := sys.Clients["verifier"]
+	seqRollupRPCClient, err := rpc.DialContext(context.Background(), sys.RollupNodes["sequencer"].HTTPEndpoint())
+	require.Nil(t, err)
+	seqRollupClient := sources.NewRollupClient(client.NewBaseRPCClient(seqRollupRPCClient))
 
 	// Transactor Account
 	ethPrivKey := cfg.Secrets.Alice
@@ -510,7 +519,7 @@ func TestMissingBatchE2E(t *testing.T) {
 	require.Equal(t, ethereum.NotFound, err, "Found transaction in verifier when it should not have been included")
 
 	// Wait a short time for the L2 reorg to occur on the sequencer as well.
-	err = wait.ForSafeBlock(ctx, seqRollupClient, receipt.BlockNumber.Uint64())
+	err = waitForSafeHead(ctx, receipt.BlockNumber.Uint64(), seqRollupClient)
 	require.Nil(t, err, "timeout waiting for L2 reorg on sequencer safe head")
 
 	// Assert that the reconciliation process did an L2 reorg on the sequencer to remove the invalid block
@@ -632,9 +641,11 @@ func TestSystemMockP2P(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
+	defer sys.Close()
 
 	// Enable the sequencer now that everyone is ready to receive payloads.
-	rollupClient := sys.RollupClient("sequencer")
+	rollupRPCClient, err := rpc.DialContext(context.Background(), sys.RollupNodes["sequencer"].HTTPEndpoint())
+	require.Nil(t, err)
 
 	verifierPeerID := sys.RollupNodes["verifier"].P2P().Host().ID()
 	check := func() bool {
@@ -653,10 +664,10 @@ func TestSystemMockP2P(t *testing.T) {
 	}
 	require.True(t, check(), "verifier must be meshed with sequencer for gossip test to proceed")
 
-	require.NoError(t, rollupClient.StartSequencer(context.Background(), sys.L2GenesisCfg.ToBlock().Hash()))
+	require.NoError(t, rollupRPCClient.Call(nil, "admin_startSequencer", sys.L2GenesisCfg.ToBlock().Hash()))
 
-	l2Seq := sys.NodeClient("sequencer")
-	l2Verif := sys.NodeClient("verifier")
+	l2Seq := sys.Clients["sequencer"]
+	l2Verif := sys.Clients["verifier"]
 
 	// Transactor Account
 	ethPrivKey := cfg.Secrets.Alice
@@ -731,8 +742,9 @@ func TestSystemP2PAltSync(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
+	defer sys.Close()
 
-	l2Seq := sys.NodeClient("sequencer")
+	l2Seq := sys.Clients["sequencer"]
 
 	// Transactor Account
 	ethPrivKey := cfg.Secrets.Alice
@@ -780,9 +792,9 @@ func TestSystemP2PAltSync(t *testing.T) {
 		},
 	}
 	configureL1(syncNodeCfg, sys.EthInstances["l1"], sys.L1BeaconEndpoint())
-	syncerL2Engine, err := geth.InitL2("syncer", sys.L2GenesisCfg, cfg.JWTFilePath)
+	syncerL2Engine, _, err := geth.InitL2("syncer", big.NewInt(int64(cfg.DeployConfig.L2ChainID)), sys.L2GenesisCfg, cfg.JWTFilePath)
 	require.NoError(t, err)
-	require.NoError(t, syncerL2Engine.Node.Start())
+	require.NoError(t, syncerL2Engine.Start())
 
 	configureL2(syncNodeCfg, syncerL2Engine, cfg.JWTSecret)
 
@@ -800,7 +812,7 @@ func TestSystemP2PAltSync(t *testing.T) {
 	_, err = sys.Mocknet.ConnectPeers(sys.RollupNodes["bob"].P2P().Host().ID(), syncerNode.P2P().Host().ID())
 	require.NoError(t, err)
 
-	rpc := syncerL2Engine.UserRPC().(endpoint.ClientRPC).ClientRPC()
+	rpc := syncerL2Engine.Attach()
 	l2Verif := ethclient.NewClient(rpc)
 
 	// It may take a while to sync, but eventually we should see the sequenced data show up
@@ -886,11 +898,12 @@ func TestSystemDenseTopology(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
+	defer sys.Close()
 
-	l2Seq := sys.NodeClient("sequencer")
-	l2Verif := sys.NodeClient("verifier")
-	l2Verif2 := sys.NodeClient("verifier2")
-	l2Verif3 := sys.NodeClient("verifier3")
+	l2Seq := sys.Clients["sequencer"]
+	l2Verif := sys.Clients["verifier"]
+	l2Verif2 := sys.Clients["verifier2"]
+	l2Verif3 := sys.Clients["verifier3"]
 
 	// Transactor Account
 	ethPrivKey := cfg.Secrets.Alice
@@ -925,10 +938,11 @@ func TestL1InfoContract(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
+	defer sys.Close()
 
-	l1Client := sys.NodeClient("l1")
-	l2Seq := sys.NodeClient("sequencer")
-	l2Verif := sys.NodeClient("verifier")
+	l1Client := sys.Clients["l1"]
+	l2Seq := sys.Clients["sequencer"]
+	l2Verif := sys.Clients["verifier"]
 
 	endVerifBlockNumber := big.NewInt(4)
 	endSeqBlockNumber := big.NewInt(6)
@@ -1035,6 +1049,7 @@ func TestWithdrawals(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.NoError(t, err, "Error starting up system")
+	defer sys.Close()
 
 	RunWithdrawalsTest(t, sys)
 }
@@ -1095,10 +1110,11 @@ func TestFees(t *testing.T) {
 func testFees(t *testing.T, cfg SystemConfig) {
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
+	defer sys.Close()
 
-	l2Seq := sys.NodeClient("sequencer")
-	l2Verif := sys.NodeClient("verifier")
-	l1 := sys.NodeClient("l1")
+	l2Seq := sys.Clients["sequencer"]
+	l2Verif := sys.Clients["verifier"]
+	l1 := sys.Clients["l1"]
 
 	// Wait for first block after genesis. The genesis block has zero L1Block values and will throw off the GPO checks
 	_, err = geth.WaitForBlock(big.NewInt(1), l2Verif, time.Minute)
@@ -1276,18 +1292,18 @@ func testFees(t *testing.T, cfg SystemConfig) {
 	require.Equal(t, balanceDiff, totalFee, "balances should add up")
 }
 
-func StopStartBatcher(t *testing.T, cfgMod func(*SystemConfig)) {
+func StopStartBatcher(t *testing.T, deltaTimeOffset *hexutil.Uint64) {
 	InitParallel(t)
 
-	cfg := DefaultSystemConfig(t)
-	cfgMod(&cfg)
+	cfg := DeltaSystemConfig(t, deltaTimeOffset)
 	sys, err := cfg.Start(t)
 	require.NoError(t, err, "Error starting up system")
+	defer sys.Close()
 
 	rollupClient := sys.RollupClient("verifier")
 
-	l2Seq := sys.NodeClient("sequencer")
-	l2Verif := sys.NodeClient("verifier")
+	l2Seq := sys.Clients["sequencer"]
+	l2Verif := sys.Clients["verifier"]
 
 	// retrieve the initial sync status
 	seqStatus, err := rollupClient.SyncStatus(context.Background())
@@ -1368,9 +1384,10 @@ func TestBatcherMultiTx(t *testing.T) {
 	cfg.DisableBatcher = true
 	sys, err := cfg.Start(t)
 	require.NoError(t, err, "Error starting up system")
+	defer sys.Close()
 
-	l1Client := sys.NodeClient("l1")
-	l2Seq := sys.NodeClient("sequencer")
+	l1Client := sys.Clients["l1"]
+	l2Seq := sys.Clients["sequencer"]
 
 	_, err = geth.WaitForBlock(big.NewInt(10), l2Seq, time.Duration(cfg.DeployConfig.L2BlockTime*15)*time.Second)
 	require.NoError(t, err, "Waiting for L2 blocks")
@@ -1417,8 +1434,8 @@ func TestPendingBlockIsLatest(t *testing.T) {
 	cfg := DefaultSystemConfig(t)
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
-
-	l2Seq := sys.NodeClient("sequencer")
+	defer sys.Close()
+	l2Seq := sys.Clients["sequencer"]
 
 	t.Run("block", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
@@ -1462,13 +1479,13 @@ func TestRuntimeConfigReload(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
-
+	defer sys.Close()
 	initialRuntimeConfig := sys.RollupNodes["verifier"].RuntimeConfig()
 
 	// close the EL node, since we want to block derivation, to solely rely on the reloading mechanism for updates.
 	sys.EthInstances["verifier"].Close()
 
-	l1 := sys.NodeClient("l1")
+	l1 := sys.Clients["l1"]
 
 	// Change the system-config via L1
 	sysCfgContract, err := bindings.NewSystemConfig(cfg.L1Deployments.SystemConfigProxy, l1)
@@ -1507,11 +1524,11 @@ func TestRecommendedProtocolVersionChange(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
-
+	defer sys.Close()
 	runtimeConfig := sys.RollupNodes["verifier"].RuntimeConfig()
 
 	// Change the superchain-config via L1
-	l1 := sys.NodeClient("l1")
+	l1 := sys.Clients["l1"]
 
 	_, build, major, minor, patch, preRelease := params.OPStackSupport.Parse()
 	newRecommendedProtocolVersion := params.ProtocolVersionV0{Build: build, Major: major + 1, Minor: minor, Patch: patch, PreRelease: preRelease}.Encode()
@@ -1562,11 +1579,11 @@ func TestRequiredProtocolVersionChangeAndHalt(t *testing.T) {
 
 	sys, err := cfg.Start(t)
 	require.Nil(t, err, "Error starting up system")
-
+	defer sys.Close()
 	runtimeConfig := sys.RollupNodes["verifier"].RuntimeConfig()
 
 	// Change the superchain-config via L1
-	l1 := sys.NodeClient("l1")
+	l1 := sys.Clients["l1"]
 
 	_, build, major, minor, patch, preRelease := params.OPStackSupport.Parse()
 	newRequiredProtocolVersion := params.ProtocolVersionV0{Build: build, Major: major + 1, Minor: minor, Patch: patch, PreRelease: preRelease}.Encode()
@@ -1599,13 +1616,13 @@ func TestRequiredProtocolVersionChangeAndHalt(t *testing.T) {
 	// Checking if the engine is down is not trivial in op-e2e.
 	// In op-geth we have halting tests covering the Engine API, in op-e2e we instead check if the API stops.
 	_, err = retry.Do(context.Background(), 10, retry.Fixed(time.Second*10), func() (struct{}, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		available := client.IsURLAvailable(ctx, sys.NodeEndpoint("verifier").(endpoint.HttpRPC).HttpRPC())
-		if !available && ctx.Err() == nil { // waiting for client to stop responding to RPC requests (slow dials with timeout don't count)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		_, err := sys.Clients["verifier"].ChainID(ctx)
+		cancel()
+		if err != nil && !errors.Is(err, ctx.Err()) { // waiting for client to stop responding to chainID requests
 			return struct{}{}, nil
 		}
-		return struct{}{}, errors.New("verifier EL node is not closed yet")
+		return struct{}{}, errors.New("verifier rollup node is not closed yet")
 	})
 	require.NoError(t, err)
 	t.Log("verified that op-geth closed!")

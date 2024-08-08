@@ -3,7 +3,6 @@ package batcher
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"math/big"
 	"testing"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 	"github.com/ethereum-optimism/optimism/op-service/testlog"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slog"
 )
 
 type mockGasPricer struct {

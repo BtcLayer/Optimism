@@ -30,15 +30,11 @@ type recordDiff[V record] interface {
 	Apply(v V)
 }
 
-var errUnknownRecord = errors.New("unknown record")
-
-func genNew[T any]() *T {
-	return new(T)
-}
+var ErrUnknownRecord = errors.New("unknown record")
 
 // recordsBook is a generic K-V store to embed in the extended-peerstore.
 // It prunes old entries to keep the store small.
-// The recordsBook can be wrapped to customize typing and introduce synchronization.
+// The recordsBook can be wrapped to customize typing more.
 type recordsBook[K ~string, V record] struct {
 	ctx          context.Context
 	cancelFn     context.CancelFunc
@@ -51,6 +47,7 @@ type recordsBook[K ~string, V record] struct {
 	dsBaseKey    ds.Key
 	dsEntryKey   func(K) ds.Key
 	recordExpiry time.Duration // pruning is disabled if this is 0
+	sync.RWMutex
 }
 
 func newRecordsBook[K ~string, V record](ctx context.Context, logger log.Logger, clock clock.Clock, store ds.Batching, cacheSize int, recordExpiry time.Duration,
@@ -83,34 +80,36 @@ func (d *recordsBook[K, V]) startGC() {
 	startGc(d.ctx, d.log, d.clock, &d.bgTasks, d.prune)
 }
 
+func (d *recordsBook[K, V]) GetRecord(key K) (V, error) {
+	d.RLock()
+	defer d.RUnlock()
+	rec, err := d.getRecord(key)
+	return rec, err
+}
+
 func (d *recordsBook[K, V]) dsKey(key K) ds.Key {
 	return d.dsBaseKey.Child(d.dsEntryKey(key))
 }
 
 func (d *recordsBook[K, V]) deleteRecord(key K) error {
-	// If access to this isn't synchronized, removing from the cache first can result in the stored
-	// item being cached again before it is deleted.
-	err := d.store.Delete(d.ctx, d.dsKey(key))
 	d.cache.Remove(key)
+	err := d.store.Delete(d.ctx, d.dsKey(key))
 	if err == nil || errors.Is(err, ds.ErrNotFound) {
 		return nil
 	}
 	return fmt.Errorf("failed to delete entry with key %v: %w", key, err)
 }
 
-// You must read lock the recordsBook before calling this, and only unlock when you have extracted
-// the values you want from the value of type V. There's no way to conveniently pass an extractor
-// function parameterized on V here without breaking this out into a top-level function.
 func (d *recordsBook[K, V]) getRecord(key K) (v V, err error) {
 	if val, ok := d.cache.Get(key); ok {
 		if d.hasExpired(val) {
-			return v, errUnknownRecord
+			return v, ErrUnknownRecord
 		}
 		return val, nil
 	}
 	data, err := d.store.Get(d.ctx, d.dsKey(key))
 	if errors.Is(err, ds.ErrNotFound) {
-		return v, errUnknownRecord
+		return v, ErrUnknownRecord
 	} else if err != nil {
 		return v, fmt.Errorf("failed to load value of key %v: %w", key, err)
 	}
@@ -119,18 +118,17 @@ func (d *recordsBook[K, V]) getRecord(key K) (v V, err error) {
 		return v, fmt.Errorf("invalid value for key %v: %w", key, err)
 	}
 	if d.hasExpired(v) {
-		return v, errUnknownRecord
+		return v, ErrUnknownRecord
 	}
-	// This is safe with a read lock as it's self-synchronized.
 	d.cache.Add(key, v)
 	return v, nil
 }
 
-// You should lock the records book before calling this, and unlock it when you copy any values out
-// of the returned value.
-func (d *recordsBook[K, V]) setRecord(key K, diff recordDiff[V]) (V, error) {
+func (d *recordsBook[K, V]) SetRecord(key K, diff recordDiff[V]) (V, error) {
+	d.Lock()
+	defer d.Unlock()
 	rec, err := d.getRecord(key)
-	if err == errUnknownRecord { // instantiate new record if it does not exist yet
+	if err == ErrUnknownRecord { // instantiate new record if it does not exist yet
 		rec = d.newRecord()
 	} else if err != nil {
 		return d.newRecord(), err

@@ -16,7 +16,6 @@ type AdminBackend interface {
 
 type QueryBackend interface {
 	CheckMessage(identifier types.Identifier, payloadHash common.Hash) (types.SafetyLevel, error)
-	CheckMessages(messages []types.Message, minSafety types.SafetyLevel) error
 	CheckBlock(chainID *hexutil.U256, blockHash common.Hash, blockNumber hexutil.Uint64) (types.SafetyLevel, error)
 }
 
@@ -33,14 +32,6 @@ type QueryFrontend struct {
 // The payloadHash references the hash of the message-payload of the message.
 func (q *QueryFrontend) CheckMessage(identifier types.Identifier, payloadHash common.Hash) (types.SafetyLevel, error) {
 	return q.Supervisor.CheckMessage(identifier, payloadHash)
-}
-
-// CheckMessage checks the safety-level of a collection of messages,
-// and returns if the minimum safety-level is met for all messages.
-func (q *QueryFrontend) CheckMessages(
-	messages []types.Message,
-	minSafety types.SafetyLevel) error {
-	return q.Supervisor.CheckMessages(messages, minSafety)
 }
 
 // CheckBlock checks the safety-level of an L2 block as a whole.

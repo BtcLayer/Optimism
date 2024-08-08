@@ -21,8 +21,8 @@ func TestTxGossip(t *testing.T) {
 	sys, err := cfg.Start(t)
 	require.NoError(t, err, "Start system")
 
-	seqClient := sys.NodeClient("sequencer")
-	verifClient := sys.NodeClient("verifier")
+	seqClient := sys.Clients["sequencer"]
+	verifClient := sys.Clients["verifier"]
 	geth.ConnectP2P(t, seqClient, verifClient)
 
 	// This prevents the below tx-sending from flaking in CI

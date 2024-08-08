@@ -1,8 +1,9 @@
 package event
 
 import (
-	"log/slog"
 	"time"
+
+	"golang.org/x/exp/slog"
 
 	"github.com/ethereum/go-ethereum/log"
 )

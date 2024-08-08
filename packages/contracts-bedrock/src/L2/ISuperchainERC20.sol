@@ -9,30 +9,27 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///         importing the full SuperchainERC20 interface would cause conflicting imports.
 interface ISuperchainERC20Extensions {
     /// @notice Emitted when tokens are sent from one chain to another.
-    /// @param from         Address of the sender.
-    /// @param to           Address of the recipient.
-    /// @param amount       Number of tokens sent.
-    /// @param destination  Chain ID of the destination chain.
-    event SendERC20(address indexed from, address indexed to, uint256 amount, uint256 destination);
+    /// @param _from    Address of the sender.
+    /// @param _to      Address of the recipient.
+    /// @param _amount  Number of tokens sent.
+    /// @param _chainId Chain ID of the recipient.
+    event SendERC20(address indexed _from, address indexed _to, uint256 _amount, uint256 _chainId);
 
-    /// @notice Emitted whenever tokens are successfully relayed on this chain.
-    /// @param from     Address of the msg.sender of sendERC20 on the source chain.
-    /// @param to       Address of the recipient.
-    /// @param amount   Amount of tokens relayed.
-    /// @param source   Chain ID of the source chain.
-    event RelayERC20(address indexed from, address indexed to, uint256 amount, uint256 source);
+    /// @notice Emitted when token sends are relayed to this chain.
+    /// @param _to     Address of the recipient.
+    /// @param _amount Number of tokens sent.
+    event RelayERC20(address indexed _to, uint256 _amount);
 
-    /// @notice Sends tokens to some target address on another chain.
-    /// @param _to      Address to send tokens to.
-    /// @param _amount  Amount of tokens to send.
-    /// @param _chainId Chain ID of the destination chain.
+    /// @notice Sends tokens to another chain.
+    /// @param _to      Address of the recipient.
+    /// @param _amount  Number of tokens to send.
+    /// @param _chainId Chain ID of the recipient.
     function sendERC20(address _to, uint256 _amount, uint256 _chainId) external;
 
-    /// @notice Relays tokens received from another chain.
-    /// @param _from    Address of the msg.sender of sendERC20 on the source chain.
-    /// @param _to      Address to relay tokens to.
-    /// @param _amount  Amount of tokens to relay.
-    function relayERC20(address _from, address _to, uint256 _amount) external;
+    /// @notice Relays a send of tokens to this chain.
+    /// @param _to     Address of the recipient.
+    /// @param _amount Number of tokens sent.
+    function relayERC20(address _to, uint256 _amount) external;
 }
 
 /// @title ISuperchainERC20

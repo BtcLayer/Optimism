@@ -67,7 +67,7 @@ func NewOracleBackedL2Chain(logger log.Logger, oracle Oracle, precompileOracle e
 		blocks:     make(map[common.Hash]*types.Block),
 		db:         NewOracleBackedDB(oracle),
 		vmCfg: vm.Config{
-			PrecompileOverrides: engineapi.CreatePrecompileOverrides(precompileOracle),
+			OptimismPrecompileOverrides: engineapi.CreatePrecompileOverrides(precompileOracle),
 		},
 	}, nil
 }
@@ -170,12 +170,7 @@ func (o *OracleBackedL2Chain) Engine() consensus.Engine {
 }
 
 func (o *OracleBackedL2Chain) StateAt(root common.Hash) (*state.StateDB, error) {
-	stateDB, err := state.New(root, state.NewDatabase(rawdb.NewDatabase(o.db)), nil)
-	if err != nil {
-		return nil, err
-	}
-	stateDB.MakeSinglethreaded()
-	return stateDB, nil
+	return state.New(root, state.NewDatabase(rawdb.NewDatabase(o.db)), nil)
 }
 
 func (o *OracleBackedL2Chain) InsertBlockWithoutSetHead(block *types.Block) error {

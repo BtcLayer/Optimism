@@ -559,7 +559,7 @@ contract OptimismPortal2_FinalizeWithdrawal_Test is CommonTest {
     function test_proveWithdrawalTransaction_onInvalidOutputRootProof_reverts() external {
         // Modify the version to invalidate the withdrawal proof.
         _outputRootProof.version = bytes32(uint256(1));
-        vm.expectRevert(InvalidProof.selector);
+        vm.expectRevert("OptimismPortal: invalid output root proof");
         optimismPortal2.proveWithdrawalTransaction({
             _tx: _defaultTx,
             _disputeGameIndex: _proposedGameIndex,
@@ -603,7 +603,7 @@ contract OptimismPortal2_FinalizeWithdrawal_Test is CommonTest {
         vm.mockCall(address(game), abi.encodeCall(game.status, ()), abi.encode(GameStatus.CHALLENGER_WINS));
         vm.mockCall(address(game2), abi.encodeCall(game.status, ()), abi.encode(GameStatus.CHALLENGER_WINS));
 
-        vm.expectRevert(InvalidDisputeGame.selector);
+        vm.expectRevert("OptimismPortal: cannot prove against invalid dispute games");
         optimismPortal2.proveWithdrawalTransaction({
             _tx: _defaultTx,
             _disputeGameIndex: _proposedGameIndex,
@@ -621,7 +621,7 @@ contract OptimismPortal2_FinalizeWithdrawal_Test is CommonTest {
             abi.encode(GameType.wrap(0xFF), Timestamp.wrap(uint64(block.timestamp)), IDisputeGame(address(game)))
         );
 
-        vm.expectRevert(InvalidGameType.selector);
+        vm.expectRevert("OptimismPortal: invalid game type");
         optimismPortal2.proveWithdrawalTransaction({
             _tx: _defaultTx,
             _disputeGameIndex: _proposedGameIndex,
@@ -796,7 +796,7 @@ contract OptimismPortal2_FinalizeWithdrawal_Test is CommonTest {
         emit WithdrawalFinalized(_withdrawalHash, true);
         optimismPortal2.finalizeWithdrawalTransactionExternalProof(_defaultTx, address(0xb0b));
 
-        vm.expectRevert(AlreadyFinalized.selector);
+        vm.expectRevert("OptimismPortal: withdrawal has already been finalized");
         optimismPortal2.finalizeWithdrawalTransactionExternalProof(_defaultTx, address(this));
 
         assert(address(bob).balance == bobBalanceBefore + 100);
@@ -879,7 +879,7 @@ contract OptimismPortal2_FinalizeWithdrawal_Test is CommonTest {
         // Ensure both proofs are registered successfully.
         assertEq(optimismPortal2.numProofSubmitters(_withdrawalHash), 2);
 
-        vm.expectRevert(ProposalNotValidated.selector);
+        vm.expectRevert("OptimismPortal: output proposal has not been validated");
         vm.prank(address(0xb0b));
         optimismPortal2.finalizeWithdrawalTransaction(_defaultTx);
 
@@ -927,7 +927,7 @@ contract OptimismPortal2_FinalizeWithdrawal_Test is CommonTest {
     function test_finalizeWithdrawalTransaction_ifWithdrawalNotProven_reverts() external {
         uint256 bobBalanceBefore = address(bob).balance;
 
-        vm.expectRevert(Unproven.selector);
+        vm.expectRevert("OptimismPortal: withdrawal has not been proven by proof submitter address yet");
         optimismPortal2.finalizeWithdrawalTransaction(_defaultTx);
 
         assert(address(bob).balance == bobBalanceBefore);
@@ -1007,7 +1007,7 @@ contract OptimismPortal2_FinalizeWithdrawal_Test is CommonTest {
         vm.warp(block.timestamp + optimismPortal2.proofMaturityDelaySeconds() + 1);
 
         // Attempt to finalize the withdrawal
-        vm.expectRevert(ProposalNotValidated.selector);
+        vm.expectRevert("OptimismPortal: output proposal has not been validated");
         optimismPortal2.finalizeWithdrawalTransaction(_defaultTx);
 
         // Ensure that bob's balance has remained the same
@@ -1065,7 +1065,7 @@ contract OptimismPortal2_FinalizeWithdrawal_Test is CommonTest {
         emit WithdrawalFinalized(_withdrawalHash, true);
         optimismPortal2.finalizeWithdrawalTransaction(_defaultTx);
 
-        vm.expectRevert(AlreadyFinalized.selector);
+        vm.expectRevert("OptimismPortal: withdrawal has already been finalized");
         optimismPortal2.finalizeWithdrawalTransaction(_defaultTx);
     }
 
@@ -1258,7 +1258,7 @@ contract OptimismPortal2_FinalizeWithdrawal_Test is CommonTest {
 
         vm.warp(block.timestamp + optimismPortal2.proofMaturityDelaySeconds() + 1);
 
-        vm.expectRevert(Blacklisted.selector);
+        vm.expectRevert("OptimismPortal: dispute game has been blacklisted");
         optimismPortal2.finalizeWithdrawalTransaction(_defaultTx);
     }
 
@@ -1318,7 +1318,7 @@ contract OptimismPortal2_FinalizeWithdrawal_Test is CommonTest {
         vm.prank(optimismPortal2.guardian());
         optimismPortal2.setRespectedGameType(GameType.wrap(0xFF));
 
-        vm.expectRevert(InvalidGameType.selector);
+        vm.expectRevert("OptimismPortal: invalid game type");
         optimismPortal2.finalizeWithdrawalTransaction(_defaultTx);
     }
 
@@ -1376,7 +1376,7 @@ contract OptimismPortal2_FinalizeWithdrawal_Test is CommonTest {
         // Warp 1 second in the future, past the proof maturity delay, and attempt to finalize the withdrawal.
         // This should also fail, since the dispute game has not resolved yet.
         vm.warp(block.timestamp + 1 seconds);
-        vm.expectRevert(ProposalNotValidated.selector);
+        vm.expectRevert("OptimismPortal: output proposal has not been validated");
         optimismPortal2.finalizeWithdrawalTransaction(_defaultTx);
 
         // Finalize the dispute game and attempt to finalize the withdrawal again. This should also fail, since the

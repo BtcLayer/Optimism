@@ -1,8 +1,9 @@
 package log
 
 import (
-	"log/slog"
 	"sync"
+
+	"golang.org/x/exp/slog"
 
 	"github.com/ethereum/go-ethereum/log"
 )

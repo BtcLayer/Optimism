@@ -9,11 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	e2e "github.com/ethereum-optimism/optimism/op-e2e"
 	"github.com/ethereum-optimism/optimism/op-e2e/config"
-	"github.com/ethereum-optimism/optimism/op-service/endpoint"
+	"github.com/stretchr/testify/require"
 )
 
 func TestShim(t *testing.T) {
@@ -43,13 +41,13 @@ func TestShim(t *testing.T) {
 	}).Run(t)
 	t.Cleanup(func() { _ = ec.Close() })
 
-	for _, rpcEndpoint := range []string{
-		ec.UserRPC().(endpoint.HttpRPC).HttpRPC(),
-		ec.AuthRPC().(endpoint.HttpRPC).HttpRPC(),
-		ec.UserRPC().(endpoint.WsRPC).WsRPC(),
-		ec.AuthRPC().(endpoint.WsRPC).WsRPC(),
+	for _, endpoint := range []string{
+		ec.HTTPEndpoint(),
+		ec.HTTPAuthEndpoint(),
+		ec.WSEndpoint(),
+		ec.WSAuthEndpoint(),
 	} {
-		plainURL, err := url.ParseRequestURI(rpcEndpoint)
+		plainURL, err := url.ParseRequestURI(endpoint)
 		require.NoError(t, err)
 		_, err = net.DialTimeout("tcp", plainURL.Host, time.Second)
 		require.NoError(t, err, "could not connect to HTTP port")

@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,8 +18,7 @@ const (
 
 var scoresBase = ds.NewKey("/peers/scores")
 
-// LastUpdate requires atomic update operations. Use the helper functions SetLastUpdated and
-// LastUpdated to modify and access this field.
+// LastUpdate requires atomic update operations. Use the helper functions SetLastUpdated and LastUpdated to modify and access this field.
 type scoreRecord struct {
 	LastUpdate int64      `json:"lastUpdate"` // unix timestamp in seconds
 	PeerScores PeerScores `json:"peerScores"`
@@ -48,8 +46,11 @@ func (s *scoreRecord) UnmarshalBinary(data []byte) error {
 }
 
 type scoreBook struct {
-	mu   sync.RWMutex
 	book *recordsBook[peer.ID, *scoreRecord]
+}
+
+func newScoreRecord() *scoreRecord {
+	return new(scoreRecord)
 }
 
 func peerIDKey(id peer.ID) ds.Key {
@@ -57,7 +58,7 @@ func peerIDKey(id peer.ID) ds.Key {
 }
 
 func newScoreBook(ctx context.Context, logger log.Logger, clock clock.Clock, store ds.Batching, retain time.Duration) (*scoreBook, error) {
-	book, err := newRecordsBook[peer.ID, *scoreRecord](ctx, logger, clock, store, scoreCacheSize, retain, scoresBase, genNew, peerIDKey)
+	book, err := newRecordsBook[peer.ID, *scoreRecord](ctx, logger, clock, store, scoreCacheSize, retain, scoresBase, newScoreRecord, peerIDKey)
 	if err != nil {
 		return nil, err
 	}
@@ -69,10 +70,8 @@ func (d *scoreBook) startGC() {
 }
 
 func (d *scoreBook) GetPeerScores(id peer.ID) (PeerScores, error) {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
 	record, err := d.book.getRecord(id)
-	if err == errUnknownRecord {
+	if err == ErrUnknownRecord {
 		return PeerScores{}, nil // return zeroed scores by default
 	}
 	if err != nil {
@@ -90,9 +89,7 @@ func (d *scoreBook) GetPeerScore(id peer.ID) (float64, error) {
 }
 
 func (d *scoreBook) SetScore(id peer.ID, diff ScoreDiff) (PeerScores, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	v, err := d.book.setRecord(id, diff)
+	v, err := d.book.SetRecord(id, diff)
 	return v.PeerScores, err
 }
 

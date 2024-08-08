@@ -26,7 +26,7 @@ contract SuperchainWETH_Test is CommonTest {
     event SendERC20(address indexed _from, address indexed _to, uint256 _amount, uint256 _chainId);
 
     /// @notice Emitted when an ERC20 send is relayed.
-    event RelayERC20(address indexed _from, address indexed _to, uint256 _amount, uint256 _source);
+    event RelayERC20(address indexed _to, uint256 _amount);
 
     /// @notice Test setup.
     function setUp() public virtual override {
@@ -151,11 +151,7 @@ contract SuperchainWETH_Test is CommonTest {
             Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER,
             abi.encodeCall(
                 IL2ToL2CrossDomainMessenger.sendMessage,
-                (
-                    _chainId,
-                    address(superchainWeth),
-                    abi.encodeCall(superchainWeth.relayERC20, (_caller, _recipient, _amount))
-                )
+                (_chainId, address(superchainWeth), abi.encodeCall(superchainWeth.relayERC20, (_recipient, _amount)))
             ),
             1
         );
@@ -193,7 +189,7 @@ contract SuperchainWETH_Test is CommonTest {
             Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER,
             abi.encodeCall(
                 IL2ToL2CrossDomainMessenger.sendMessage,
-                (_chainId, address(superchainWeth), abi.encodeCall(superchainWeth.relayERC20, (alice, bob, _amount)))
+                (_chainId, address(superchainWeth), abi.encodeCall(superchainWeth.relayERC20, (bob, _amount)))
             ),
             1
         );
@@ -231,7 +227,7 @@ contract SuperchainWETH_Test is CommonTest {
     ///         L2ToL2CrossDomainMessenger as long as the crossDomainMessageSender is the
     ///         SuperchainWETH contract.
     /// @param _amount The amount of WETH to send.
-    function testFuzz_relayERC20_fromMessenger_succeeds(address _sender, uint256 _amount, uint256 _chainId) public {
+    function testFuzz_relayERC20_fromMessenger_succeeds(uint256 _amount) public {
         // Assume
         _amount = bound(_amount, 0, type(uint248).max - 1);
 
@@ -241,18 +237,13 @@ contract SuperchainWETH_Test is CommonTest {
             abi.encodeCall(IL2ToL2CrossDomainMessenger.crossDomainMessageSender, ()),
             abi.encode(address(superchainWeth))
         );
-        vm.mockCall(
-            Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER,
-            abi.encodeCall(IL2ToL2CrossDomainMessenger.crossDomainMessageSource, ()),
-            abi.encode(_chainId)
-        );
 
         // Act
         vm.expectEmit(address(superchainWeth));
-        emit RelayERC20(_sender, bob, _amount, _chainId);
+        emit RelayERC20(bob, _amount);
         vm.expectCall(Predeploys.ETH_LIQUIDITY, abi.encodeCall(ETHLiquidity.mint, (_amount)), 1);
         vm.prank(Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER);
-        superchainWeth.relayERC20(_sender, bob, _amount);
+        superchainWeth.relayERC20(bob, _amount);
 
         // Assert
         assertEq(address(superchainWeth).balance, _amount);
@@ -264,13 +255,7 @@ contract SuperchainWETH_Test is CommonTest {
     ///         SuperchainWETH contract, even when the chain is a custom gas token chain. Shows
     ///         that ETH is not minted in this case but the SuperchainWETH balance is updated.
     /// @param _amount The amount of WETH to send.
-    function testFuzz_relayERC20_fromMessengerCustomGasTokenChain_succeeds(
-        address _sender,
-        uint256 _amount,
-        uint256 _chainId
-    )
-        public
-    {
+    function testFuzz_relayERC20_fromMessengerCustomGasTokenChain_succeeds(uint256 _amount) public {
         // Assume
         _amount = bound(_amount, 0, type(uint248).max - 1);
 
@@ -280,19 +265,14 @@ contract SuperchainWETH_Test is CommonTest {
             abi.encodeCall(IL2ToL2CrossDomainMessenger.crossDomainMessageSender, ()),
             abi.encode(address(superchainWeth))
         );
-        vm.mockCall(
-            Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER,
-            abi.encodeCall(IL2ToL2CrossDomainMessenger.crossDomainMessageSource, ()),
-            abi.encode(_chainId)
-        );
         vm.mockCall(address(l1Block), abi.encodeCall(l1Block.isCustomGasToken, ()), abi.encode(true));
 
         // Act
         vm.expectEmit(address(superchainWeth));
-        emit RelayERC20(_sender, bob, _amount, _chainId);
+        emit RelayERC20(bob, _amount);
         vm.expectCall(Predeploys.ETH_LIQUIDITY, abi.encodeCall(ETHLiquidity.mint, (_amount)), 0);
         vm.prank(Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER);
-        superchainWeth.relayERC20(_sender, bob, _amount);
+        superchainWeth.relayERC20(bob, _amount);
 
         // Assert
         assertEq(address(superchainWeth).balance, 0);
@@ -302,7 +282,7 @@ contract SuperchainWETH_Test is CommonTest {
     /// @notice Tests that the relayERC20 function reverts when not called from the
     ///         L2ToL2CrossDomainMessenger.
     /// @param _amount The amount of WETH to send.
-    function testFuzz_relayERC20_notFromMessenger_fails(address _sender, uint256 _amount) public {
+    function testFuzz_relayERC20_notFromMessenger_fails(uint256 _amount) public {
         // Assume
         _amount = bound(_amount, 0, type(uint248).max - 1);
 
@@ -312,7 +292,7 @@ contract SuperchainWETH_Test is CommonTest {
         // Act
         vm.expectRevert(Unauthorized.selector);
         vm.prank(alice);
-        superchainWeth.relayERC20(_sender, bob, _amount);
+        superchainWeth.relayERC20(bob, _amount);
 
         // Assert
         assertEq(address(superchainWeth).balance, 0);
@@ -323,7 +303,7 @@ contract SuperchainWETH_Test is CommonTest {
     ///         L2ToL2CrossDomainMessenger but the crossDomainMessageSender is not the
     ///         SuperchainWETH contract.
     /// @param _amount The amount of WETH to send.
-    function testFuzz_relayERC20_fromMessengerNotFromSuperchainWETH_fails(address _sender, uint256 _amount) public {
+    function testFuzz_relayERC20_fromMessengerNotFromSuperchainWETH_fails(uint256 _amount) public {
         // Assume
         _amount = bound(_amount, 0, type(uint248).max - 1);
 
@@ -337,7 +317,7 @@ contract SuperchainWETH_Test is CommonTest {
         // Act
         vm.expectRevert(Unauthorized.selector);
         vm.prank(Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER);
-        superchainWeth.relayERC20(_sender, bob, _amount);
+        superchainWeth.relayERC20(bob, _amount);
 
         // Assert
         assertEq(address(superchainWeth).balance, 0);

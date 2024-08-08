@@ -2,7 +2,8 @@ package log
 
 import (
 	"context"
-	"log/slog"
+
+	"golang.org/x/exp/slog"
 )
 
 type LvlSetter interface {

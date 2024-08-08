@@ -28,7 +28,7 @@ func createTraceProvider(
 ) (types.TraceProvider, error) {
 	switch traceType {
 	case types.TraceTypeCannon:
-		vmConfig := vm.NewOpProgramServerExecutor()
+		vmConfig := vm.NewOpProgramVmConfig()
 		prestate, err := getPrestate(prestateHash, cfg.CannonAbsolutePreStateBaseURL, cfg.CannonAbsolutePreState, dir)
 		if err != nil {
 			return nil, err
@@ -36,7 +36,7 @@ func createTraceProvider(
 		prestateProvider := cannon.NewPrestateProvider(prestate)
 		return cannon.NewTraceProvider(logger, m, cfg.Cannon, vmConfig, prestateProvider, prestate, localInputs, dir, 42), nil
 	case types.TraceTypeAsterisc:
-		vmConfig := vm.NewOpProgramServerExecutor()
+		vmConfig := vm.NewOpProgramVmConfig()
 		prestate, err := getPrestate(prestateHash, cfg.AsteriscAbsolutePreStateBaseURL, cfg.AsteriscAbsolutePreState, dir)
 		if err != nil {
 			return nil, err
@@ -44,7 +44,7 @@ func createTraceProvider(
 		prestateProvider := asterisc.NewPrestateProvider(prestate)
 		return asterisc.NewTraceProvider(logger, m, cfg.Asterisc, vmConfig, prestateProvider, prestate, localInputs, dir, 42), nil
 	case types.TraceTypeAsteriscKona:
-		vmConfig := vm.NewKonaServerExecutor()
+		vmConfig := vm.NewKonaVmConfig()
 		prestate, err := getPrestate(prestateHash, cfg.AsteriscAbsolutePreStateBaseURL, cfg.AsteriscAbsolutePreState, dir)
 		if err != nil {
 			return nil, err

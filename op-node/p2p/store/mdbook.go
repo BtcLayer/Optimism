@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -48,7 +47,6 @@ func (m *metadataRecord) UnmarshalBinary(data []byte) error {
 }
 
 type metadataBook struct {
-	mu   sync.RWMutex
 	book *recordsBook[peer.ID, *metadataRecord]
 }
 
@@ -57,7 +55,7 @@ func newMetadataRecord() *metadataRecord {
 }
 
 func newMetadataBook(ctx context.Context, logger log.Logger, clock clock.Clock, store ds.Batching) (*metadataBook, error) {
-	book, err := newRecordsBook[peer.ID, *metadataRecord](ctx, logger, clock, store, mdCacheSize, mdRecordExpiration, metadataBase, genNew, peerIDKey)
+	book, err := newRecordsBook[peer.ID, *metadataRecord](ctx, logger, clock, store, mdCacheSize, mdRecordExpiration, metadataBase, newMetadataRecord, peerIDKey)
 	if err != nil {
 		return nil, err
 	}
@@ -69,11 +67,9 @@ func (m *metadataBook) startGC() {
 }
 
 func (m *metadataBook) GetPeerMetadata(id peer.ID) (PeerMetadata, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
 	record, err := m.book.getRecord(id)
 	// If the record is not found, return an empty PeerMetadata
-	if err == errUnknownRecord {
+	if err == ErrUnknownRecord {
 		return PeerMetadata{}, nil
 	}
 	if err != nil {
@@ -93,9 +89,7 @@ func (m *metadataBook) SetPeerMetadata(id peer.ID, md PeerMetadata) (PeerMetadat
 	rec := newMetadataRecord()
 	rec.PeerMetadata = md
 	rec.SetLastUpdated(m.book.clock.Now())
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	v, err := m.book.setRecord(id, rec)
+	v, err := m.book.SetRecord(id, rec)
 	return v.PeerMetadata, err
 }
 

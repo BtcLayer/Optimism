@@ -62,7 +62,7 @@ func newMiniL2BlockWithNumberParentAndL1Information(numTx int, l2Number *big.Int
 		Difficulty: common.Big0,
 		Number:     big.NewInt(l1Number),
 		Time:       blockTime,
-	}, nil, nil, trie.NewStackTrie(nil))
+	}, nil, nil, nil, trie.NewStackTrie(nil))
 	l1InfoTx, err := derive.L1InfoDeposit(&defaultTestRollupConfig, eth.SystemConfig{}, 0, eth.BlockToInfo(l1Block), blockTime)
 	if err != nil {
 		panic(err)
@@ -77,7 +77,7 @@ func newMiniL2BlockWithNumberParentAndL1Information(numTx int, l2Number *big.Int
 	return types.NewBlock(&types.Header{
 		Number:     l2Number,
 		ParentHash: parent,
-	}, &types.Body{Transactions: txs}, nil, trie.NewStackTrie(nil))
+	}, txs, nil, nil, trie.NewStackTrie(nil))
 }
 
 // addTooManyBlocks adds blocks to the channel until it hits an error,
@@ -434,7 +434,11 @@ func TestChannelBuilder_OutputFrames(t *testing.T) {
 func TestChannelBuilder_OutputFrames_SpanBatch(t *testing.T) {
 	for _, algo := range derive.CompressionAlgos {
 		t.Run("ChannelBuilder_OutputFrames_SpanBatch_"+algo.String(), func(t *testing.T) {
-			ChannelBuilder_OutputFrames_SpanBatch(t, algo) // to fill faster for brotli
+			if algo.IsBrotli() {
+				ChannelBuilder_OutputFrames_SpanBatch(t, algo) // to fill faster for brotli
+			} else {
+				ChannelBuilder_OutputFrames_SpanBatch(t, algo)
+			}
 		})
 	}
 }

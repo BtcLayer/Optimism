@@ -19,7 +19,6 @@ import (
 	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils/transactions"
 	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils/wait"
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
-	"github.com/ethereum-optimism/optimism/op-service/endpoint"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 	"github.com/ethereum-optimism/optimism/op-service/sources"
 	"github.com/ethereum-optimism/optimism/op-service/sources/batching"
@@ -71,10 +70,10 @@ func WithFutureProposal() GameOpt {
 }
 
 type DisputeSystem interface {
-	L1BeaconEndpoint() endpoint.RestHTTP
-	NodeEndpoint(name string) endpoint.RPC
+	L1BeaconEndpoint() string
+	NodeEndpoint(name string) string
 	NodeClient(name string) *ethclient.Client
-	RollupEndpoint(name string) endpoint.RPC
+	RollupEndpoint(name string) string
 	RollupClient(name string) *sources.RollupClient
 
 	L1Deployments() *genesis.L1Deployments

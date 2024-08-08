@@ -28,17 +28,10 @@
     "type": "address"
   },
   {
-    "bytes": "32",
-    "label": "deployments",
-    "offset": 0,
-    "slot": "2",
-    "type": "mapping(address => address)"
-  },
-  {
-    "bytes": "1536",
+    "bytes": "1568",
     "label": "__gap",
     "offset": 0,
-    "slot": "3",
-    "type": "uint256[48]"
+    "slot": "2",
+    "type": "uint256[49]"
   }
 ]

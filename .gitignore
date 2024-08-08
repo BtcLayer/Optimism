@@ -1,16 +1,45 @@
-# Project specific
-deployments
-optimism
+.DS_Store
+node_modules
+results
+temp
+coverage.json
+**/lcov.info
 
-# environment variables
+yarn-error.log
+.yarn/*
+!.yarn/releases
+!.yarn/plugins
+.pnp.*
+
+dist
+artifacts
+cache
+
+packages/contracts-bedrock/deployments/devnetL1
+packages/contracts-bedrock/deployments/anvil
+
+# vim
+*.sw*
+
+# jetbrains
+.idea/
+
+.secrets
 .env
-.env.local
-*.delme
+.env*
+!.env.example
+!.envrc.example
+*.log
 
-# Packages
-node_modules/
+.devnet
 
-# Hardhat build outputs
-artifacts/
-cache/
-build
+# Ignore local fuzzing results
+**/testdata/fuzz/
+
+coverage.out
+
+
+__pycache__
+
+# Ignore echidna artifacts
+crytic-export

@@ -62,7 +62,8 @@ func TestDencunL1ForkAfterGenesis(gt *testing.T) {
 func TestDencunL1ForkAtGenesis(gt *testing.T) {
 	t := NewDefaultTesting(gt)
 	dp := e2eutils.MakeDeployParams(t, defaultRollupTestParams)
-	require.Zero(t, *dp.DeployConfig.L1CancunTimeOffset)
+	offset := hexutil.Uint64(0)
+	dp.DeployConfig.L1CancunTimeOffset = &offset
 	sd := e2eutils.Setup(t, dp, defaultAlloc)
 	log := testlog.Logger(t, log.LevelDebug)
 	_, _, miner, sequencer, _, verifier, _, batcher := setupReorgTestActors(t, dp, sd, log)
@@ -119,13 +120,14 @@ func verifyEcotoneBlock(gt *testing.T, header *types.Header) {
 func TestDencunL2ForkAfterGenesis(gt *testing.T) {
 	t := NewDefaultTesting(gt)
 	dp := e2eutils.MakeDeployParams(t, defaultRollupTestParams)
-	require.Zero(t, *dp.DeployConfig.L1CancunTimeOffset)
+
+	cancunOffset := hexutil.Uint64(0)
+	dp.DeployConfig.L1CancunTimeOffset = &cancunOffset
 	// This test wil fork on the second block
 	offset := hexutil.Uint64(dp.DeployConfig.L2BlockTime * 2)
+	dp.DeployConfig.L2GenesisCanyonTimeOffset = &offset
+	dp.DeployConfig.L2GenesisDeltaTimeOffset = &offset
 	dp.DeployConfig.L2GenesisEcotoneTimeOffset = &offset
-	dp.DeployConfig.L2GenesisFjordTimeOffset = nil
-	dp.DeployConfig.L2GenesisGraniteTimeOffset = nil
-	// New forks have to be added here, after changing the default deploy config!
 
 	sd := e2eutils.Setup(t, dp, defaultAlloc)
 	log := testlog.Logger(t, log.LevelDebug)
@@ -157,7 +159,12 @@ func TestDencunL2ForkAfterGenesis(gt *testing.T) {
 func TestDencunL2ForkAtGenesis(gt *testing.T) {
 	t := NewDefaultTesting(gt)
 	dp := e2eutils.MakeDeployParams(t, defaultRollupTestParams)
-	require.Zero(t, *dp.DeployConfig.L2GenesisEcotoneTimeOffset)
+	offset := hexutil.Uint64(0)
+	dp.DeployConfig.L2GenesisRegolithTimeOffset = &offset
+	dp.DeployConfig.L1CancunTimeOffset = &offset
+	dp.DeployConfig.L2GenesisCanyonTimeOffset = &offset
+	dp.DeployConfig.L2GenesisDeltaTimeOffset = &offset
+	dp.DeployConfig.L2GenesisEcotoneTimeOffset = &offset
 
 	sd := e2eutils.Setup(t, dp, defaultAlloc)
 	log := testlog.Logger(t, log.LevelDebug)
@@ -195,6 +202,11 @@ func newEngine(t Testing, sd *e2eutils.SetupData, log log.Logger) *L2Engine {
 func TestDencunBlobTxRPC(gt *testing.T) {
 	t := NewDefaultTesting(gt)
 	dp := e2eutils.MakeDeployParams(t, defaultRollupTestParams)
+	offset := hexutil.Uint64(0)
+	dp.DeployConfig.L2GenesisRegolithTimeOffset = &offset
+	dp.DeployConfig.L2GenesisCanyonTimeOffset = &offset
+	dp.DeployConfig.L2GenesisDeltaTimeOffset = &offset
+	dp.DeployConfig.L2GenesisEcotoneTimeOffset = &offset
 
 	sd := e2eutils.Setup(t, dp, defaultAlloc)
 	log := testlog.Logger(t, log.LevelDebug)
@@ -209,6 +221,11 @@ func TestDencunBlobTxRPC(gt *testing.T) {
 func TestDencunBlobTxInTxPool(gt *testing.T) {
 	t := NewDefaultTesting(gt)
 	dp := e2eutils.MakeDeployParams(t, defaultRollupTestParams)
+	offset := hexutil.Uint64(0)
+	dp.DeployConfig.L2GenesisRegolithTimeOffset = &offset
+	dp.DeployConfig.L2GenesisCanyonTimeOffset = &offset
+	dp.DeployConfig.L2GenesisDeltaTimeOffset = &offset
+	dp.DeployConfig.L2GenesisEcotoneTimeOffset = &offset
 
 	sd := e2eutils.Setup(t, dp, defaultAlloc)
 	log := testlog.Logger(t, log.LevelDebug)
@@ -222,6 +239,11 @@ func TestDencunBlobTxInTxPool(gt *testing.T) {
 func TestDencunBlobTxInclusion(gt *testing.T) {
 	t := NewDefaultTesting(gt)
 	dp := e2eutils.MakeDeployParams(t, defaultRollupTestParams)
+	offset := hexutil.Uint64(0)
+	dp.DeployConfig.L2GenesisRegolithTimeOffset = &offset
+	dp.DeployConfig.L2GenesisCanyonTimeOffset = &offset
+	dp.DeployConfig.L2GenesisDeltaTimeOffset = &offset
+	dp.DeployConfig.L2GenesisEcotoneTimeOffset = &offset
 
 	sd := e2eutils.Setup(t, dp, defaultAlloc)
 	log := testlog.Logger(t, log.LevelDebug)

@@ -24,12 +24,11 @@ type TxMetricer interface {
 }
 
 type TxMetrics struct {
-	txL1GasFee         prometheus.Gauge
-	txFeesTotal        prometheus.Counter
-	txGasBump          prometheus.Gauge
+	TxL1GasFee         prometheus.Gauge
+	txFees             prometheus.Counter
+	TxGasBump          prometheus.Gauge
 	txFeeHistogram     prometheus.Histogram
-	txType             prometheus.Gauge
-	latencyConfirmedTx prometheus.Gauge
+	LatencyConfirmedTx prometheus.Gauge
 	currentNonce       prometheus.Gauge
 	pendingTxs         prometheus.Gauge
 	txPublishError     *prometheus.CounterVec
@@ -56,22 +55,16 @@ var _ TxMetricer = (*TxMetrics)(nil)
 
 func MakeTxMetrics(ns string, factory metrics.Factory) TxMetrics {
 	return TxMetrics{
-		txL1GasFee: factory.NewGauge(prometheus.GaugeOpts{
+		TxL1GasFee: factory.NewGauge(prometheus.GaugeOpts{
 			Namespace: ns,
 			Name:      "tx_fee_gwei",
 			Help:      "L1 gas fee for transactions in GWEI",
 			Subsystem: "txmgr",
 		}),
-		txFeesTotal: factory.NewCounter(prometheus.CounterOpts{
+		txFees: factory.NewCounter(prometheus.CounterOpts{
 			Namespace: ns,
 			Name:      "tx_fee_gwei_total",
 			Help:      "Sum of fees spent for all transactions in GWEI",
-			Subsystem: "txmgr",
-		}),
-		txGasBump: factory.NewGauge(prometheus.GaugeOpts{
-			Namespace: ns,
-			Name:      "tx_gas_bump",
-			Help:      "Number of times a transaction gas needed to be bumped before it got included",
 			Subsystem: "txmgr",
 		}),
 		txFeeHistogram: factory.NewHistogram(prometheus.HistogramOpts{
@@ -81,13 +74,13 @@ func MakeTxMetrics(ns string, factory metrics.Factory) TxMetrics {
 			Subsystem: "txmgr",
 			Buckets:   []float64{0.5, 1, 2, 5, 10, 20, 40, 60, 80, 100, 200, 400, 800, 1600},
 		}),
-		txType: factory.NewGauge(prometheus.GaugeOpts{
+		TxGasBump: factory.NewGauge(prometheus.GaugeOpts{
 			Namespace: ns,
-			Name:      "tx_type",
-			Help:      "Transaction type (receipt field uint8)",
+			Name:      "tx_gas_bump",
+			Help:      "Number of times a transaction gas needed to be bumped before it got included",
 			Subsystem: "txmgr",
 		}),
-		latencyConfirmedTx: factory.NewGauge(prometheus.GaugeOpts{
+		LatencyConfirmedTx: factory.NewGauge(prometheus.GaugeOpts{
 			Namespace: ns,
 			Name:      "tx_confirmed_latency_ms",
 			Help:      "Latency of a confirmed transaction in milliseconds",
@@ -152,18 +145,17 @@ func (t *TxMetrics) RecordPendingTx(pending int64) {
 func (t *TxMetrics) TxConfirmed(receipt *types.Receipt) {
 	fee := float64(receipt.EffectiveGasPrice.Uint64() * receipt.GasUsed / params.GWei)
 	t.confirmEvent.Record(receiptStatusString(receipt))
-	t.txL1GasFee.Set(fee)
-	t.txFeesTotal.Add(fee)
+	t.TxL1GasFee.Set(fee)
+	t.txFees.Add(fee)
 	t.txFeeHistogram.Observe(fee)
-	t.txType.Set(float64(receipt.Type))
 }
 
 func (t *TxMetrics) RecordGasBumpCount(times int) {
-	t.txGasBump.Set(float64(times))
+	t.TxGasBump.Set(float64(times))
 }
 
 func (t *TxMetrics) RecordTxConfirmationLatency(latency int64) {
-	t.latencyConfirmedTx.Set(float64(latency))
+	t.LatencyConfirmedTx.Set(float64(latency))
 }
 
 func (t *TxMetrics) TxPublished(errString string) {
